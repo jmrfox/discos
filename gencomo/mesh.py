@@ -1,5 +1,9 @@
 """
-Mesh processing utilities for GenCoMo.
+Meimport numpy as np
+import trimesh
+import open3d as o3d
+from typing import Optional, Tuple, Dict, Any, List, Union
+import warningsocessing utilities for GenCoMo.
 
 Handles loading, processing, and analyzing neuronal meshes from various formats.
 """
@@ -7,7 +11,7 @@ Handles loading, processing, and analyzing neuronal meshes from various formats.
 import numpy as np
 import trimesh
 import open3d as o3d
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, Union
 import warnings
 
 
@@ -254,3 +258,180 @@ class MeshProcessor:
                 warnings.warn("Could not automatically repair mesh holes")
 
         return self.mesh
+
+
+# Mesh visualization functions
+
+
+def visualize_mesh_3d(
+    mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]] = None,
+    vertices: Optional[np.ndarray] = None,
+    faces: Optional[np.ndarray] = None,
+    title: str = "Neuronal Mesh",
+    show_wireframe: bool = False,
+    color: str = "lightblue",
+    backend: str = "plotly",
+) -> Optional[object]:
+    """
+    Visualize a 3D mesh using various backends.
+
+    Args:
+        mesh_data: Either a Trimesh object or (vertices, faces) tuple
+        vertices: Vertex array (alternative to mesh_data)
+        faces: Face array (alternative to mesh_data)
+        title: Plot title
+        show_wireframe: Whether to show wireframe
+        color: Mesh color
+        backend: Visualization backend ('matplotlib', 'plotly', 'trimesh')
+
+    Returns:
+        Figure object (depends on backend)
+    """
+    # Handle different input formats
+    if mesh_data is not None:
+        if isinstance(mesh_data, tuple):
+            vertices, faces = mesh_data
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        else:
+            mesh = mesh_data
+    elif vertices is not None and faces is not None:
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        raise ValueError("Must provide either mesh_data or both vertices and faces")
+
+    if backend == "matplotlib":
+        return _visualize_matplotlib(mesh, title, show_wireframe, color)
+    elif backend == "plotly":
+        return _visualize_plotly(mesh, title, color)
+    elif backend == "trimesh":
+        return _visualize_trimesh(mesh, title)
+    else:
+        raise ValueError(f"Unknown backend: {backend}")
+
+
+def _visualize_matplotlib(mesh: trimesh.Trimesh, title: str, show_wireframe: bool, color: str):
+    """Visualize using matplotlib 3D."""
+    try:
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection="3d")
+
+        # Create 3D collection from mesh faces
+        vertices = mesh.vertices
+        faces = mesh.faces
+
+        # Create face collection
+        face_collection = []
+        for face in faces:
+            face_vertices = vertices[face]
+            face_collection.append(face_vertices)
+
+        poly3d = Poly3DCollection(
+            face_collection, alpha=0.7, facecolor=color, edgecolor="black" if show_wireframe else None
+        )
+        ax.add_collection3d(poly3d)
+
+        # Set axis limits
+        ax.set_xlim(vertices[:, 0].min(), vertices[:, 0].max())
+        ax.set_ylim(vertices[:, 1].min(), vertices[:, 1].max())
+        ax.set_zlim(vertices[:, 2].min(), vertices[:, 2].max())
+
+        ax.set_xlabel("X (µm)")
+        ax.set_ylabel("Y (µm)")
+        ax.set_zlabel("Z (µm)")
+        ax.set_title(title)
+
+        plt.tight_layout()
+        return fig
+
+    except ImportError:
+        print("Matplotlib not available for 3D visualization")
+        return None
+
+
+def _visualize_plotly(mesh: trimesh.Trimesh, title: str, color: str):
+    """Visualize using plotly."""
+    try:
+        import plotly.graph_objects as go
+
+        vertices = mesh.vertices
+        faces = mesh.faces
+
+        fig = go.Figure(
+            data=[
+                go.Mesh3d(
+                    x=vertices[:, 0],
+                    y=vertices[:, 1],
+                    z=vertices[:, 2],
+                    i=faces[:, 0],
+                    j=faces[:, 1],
+                    k=faces[:, 2],
+                    color=color,
+                    opacity=0.8,
+                    name="Mesh",
+                )
+            ]
+        )
+
+        fig.update_layout(
+            title=title, scene=dict(xaxis_title="X (µm)", yaxis_title="Y (µm)", zaxis_title="Z (µm)", aspectmode="data")
+        )
+
+        return fig
+
+    except ImportError:
+        print("Plotly not available for 3D visualization")
+        return None
+
+
+def _visualize_trimesh(mesh: trimesh.Trimesh, title: str):
+    """Visualize using trimesh's built-in viewer."""
+    try:
+        scene = trimesh.Scene([mesh])
+        return scene.show(caption=title)
+    except Exception as e:
+        print(f"Trimesh visualization failed: {e}")
+        return None
+
+
+# Mesh utility functions
+
+
+def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]]) -> dict:
+    """
+    Analyze and return mesh properties for diagnostic purposes.
+
+    Args:
+        mesh_data: Either a Trimesh object or (vertices, faces) tuple
+
+    Returns:
+        Dictionary of mesh properties
+    """
+    # Convert to mesh object if needed
+    if isinstance(mesh_data, tuple):
+        vertices, faces = mesh_data
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        mesh = mesh_data
+
+    properties = {
+        "num_vertices": len(mesh.vertices),
+        "num_faces": len(mesh.faces),
+        "volume": mesh.volume if mesh.is_volume else None,
+        "surface_area": mesh.area,
+        "is_watertight": mesh.is_watertight,
+        "is_winding_consistent": mesh.is_winding_consistent,
+        "bounds": {
+            "x_range": (mesh.vertices[:, 0].min(), mesh.vertices[:, 0].max()),
+            "y_range": (mesh.vertices[:, 1].min(), mesh.vertices[:, 1].max()),
+            "z_range": (mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()),
+        },
+        "centroid": mesh.centroid.tolist() if hasattr(mesh, "centroid") else None,
+        "bounding_box_volume": mesh.bounding_box.volume,
+        "convex_hull_volume": mesh.convex_hull.volume if hasattr(mesh, "convex_hull") else None,
+    }
+
+    return properties

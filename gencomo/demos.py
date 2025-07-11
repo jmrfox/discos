@@ -1,12 +1,13 @@
 """
-3D mesh generation and visualization utilities for GenCoMo.
+Demo mesh generation functions for GenCoMo.
 
-Provides functions to create test meshes and visualize neuronal morphologies.
+Provides specific example mesh generators for testing and demonstration purposes.
+These functions create standard neuronal morphologies for tutorials and examples.
 """
 
 import numpy as np
 import trimesh
-from typing import Optional, Tuple, List, Union, Dict, Any
+from typing import Tuple, Union, Dict, Any
 import warnings
 
 
@@ -232,277 +233,7 @@ def create_mesh_with_hole(
             return outer_mesh.vertices, outer_mesh.faces
 
 
-def visualize_mesh_3d(
-    mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]] = None,
-    vertices: Optional[np.ndarray] = None,
-    faces: Optional[np.ndarray] = None,
-    title: str = "Neuronal Mesh",
-    show_wireframe: bool = False,
-    color: str = "lightblue",
-    backend: str = "plotly",
-) -> Optional[object]:
-    """
-    Visualize a 3D mesh using various backends.
-
-    Args:
-        mesh_data: Either a Trimesh object or (vertices, faces) tuple
-        vertices: Vertex array (alternative to mesh_data)
-        faces: Face array (alternative to mesh_data)
-        title: Plot title
-        show_wireframe: Whether to show wireframe
-        color: Mesh color
-        backend: Visualization backend ('matplotlib', 'plotly', 'trimesh')
-
-    Returns:
-        Figure object (depends on backend)
-    """
-    # Handle different input formats
-    if mesh_data is not None:
-        if isinstance(mesh_data, tuple):
-            vertices, faces = mesh_data
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        else:
-            mesh = mesh_data
-    elif vertices is not None and faces is not None:
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    else:
-        raise ValueError("Must provide either mesh_data or both vertices and faces")
-
-    if backend == "matplotlib":
-        return _visualize_matplotlib(mesh, title, show_wireframe, color)
-    elif backend == "plotly":
-        return _visualize_plotly(mesh, title, color)
-    elif backend == "trimesh":
-        return _visualize_trimesh(mesh, title)
-    else:
-        raise ValueError(f"Unknown backend: {backend}")
-
-
-def _visualize_matplotlib(mesh: trimesh.Trimesh, title: str, show_wireframe: bool, color: str):
-    """Visualize using matplotlib 3D."""
-    try:
-        import matplotlib.pyplot as plt
-        from mpl_toolkits.mplot3d import Axes3D
-        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-        fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection="3d")
-
-        # Create 3D collection from mesh faces
-        vertices = mesh.vertices
-        faces = mesh.faces
-
-        # Create face collection
-        face_collection = []
-        for face in faces:
-            face_vertices = vertices[face]
-            face_collection.append(face_vertices)
-
-        poly3d = Poly3DCollection(
-            face_collection, alpha=0.7, facecolor=color, edgecolor="black" if show_wireframe else None
-        )
-        ax.add_collection3d(poly3d)
-
-        # Set axis limits
-        ax.set_xlim(vertices[:, 0].min(), vertices[:, 0].max())
-        ax.set_ylim(vertices[:, 1].min(), vertices[:, 1].max())
-        ax.set_zlim(vertices[:, 2].min(), vertices[:, 2].max())
-
-        ax.set_xlabel("X (µm)")
-        ax.set_ylabel("Y (µm)")
-        ax.set_zlabel("Z (µm)")
-        ax.set_title(title)
-
-        plt.tight_layout()
-        return fig
-
-    except ImportError:
-        print("Matplotlib not available for 3D visualization")
-        return None
-
-
-def _visualize_plotly(mesh: trimesh.Trimesh, title: str, color: str):
-    """Visualize using plotly."""
-    try:
-        import plotly.graph_objects as go
-
-        vertices = mesh.vertices
-        faces = mesh.faces
-
-        fig = go.Figure(
-            data=[
-                go.Mesh3d(
-                    x=vertices[:, 0],
-                    y=vertices[:, 1],
-                    z=vertices[:, 2],
-                    i=faces[:, 0],
-                    j=faces[:, 1],
-                    k=faces[:, 2],
-                    color=color,
-                    opacity=0.8,
-                    name="Mesh",
-                )
-            ]
-        )
-
-        fig.update_layout(
-            title=title, scene=dict(xaxis_title="X (µm)", yaxis_title="Y (µm)", zaxis_title="Z (µm)", aspectmode="data")
-        )
-
-        return fig
-
-    except ImportError:
-        print("Plotly not available for 3D visualization")
-        return None
-
-
-def _visualize_trimesh(mesh: trimesh.Trimesh, title: str):
-    """Visualize using trimesh's built-in viewer."""
-    try:
-        scene = trimesh.Scene([mesh])
-        return scene.show(caption=title)
-    except Exception as e:
-        print(f"Trimesh visualization failed: {e}")
-        return None
-
-
-def save_test_meshes(output_dir: str = "test_meshes"):
-    """
-    Generate and save test meshes to files.
-
-    Args:
-        output_dir: Directory to save mesh files
-    """
-    import os
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("Generating test meshes...")
-
-    # Create cylinder mesh
-    print("  Creating cylinder mesh...")
-    cylinder = create_cylinder_mesh(length=100.0, radius=5.0)
-    cylinder.export(os.path.join(output_dir, "cylinder.stl"))
-
-    # Create Y-shaped mesh
-    print("  Creating Y-shaped mesh...")
-    y_shape = create_y_shaped_mesh(trunk_length=60.0, branch_length=40.0)
-    y_shape.export(os.path.join(output_dir, "y_neuron.stl"))
-
-    # Create mesh with hole
-    print("  Creating mesh with hole...")
-    with_hole = create_mesh_with_hole(length=80.0, hole_length=30.0)
-    with_hole.export(os.path.join(output_dir, "cylinder_with_hole.stl"))
-
-    print(f"Test meshes saved to {output_dir}/")
-
-    return {
-        "cylinder": os.path.join(output_dir, "cylinder.stl"),
-        "y_neuron": os.path.join(output_dir, "y_neuron.stl"),
-        "with_hole": os.path.join(output_dir, "cylinder_with_hole.stl"),
-    }
-
-
-def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]]) -> dict:
-    """
-    Analyze and return mesh properties for diagnostic purposes.
-
-    Args:
-        mesh_data: Either a Trimesh object or (vertices, faces) tuple
-
-    Returns:
-        Dictionary of mesh properties
-    """
-    # Convert to mesh object if needed
-    if isinstance(mesh_data, tuple):
-        vertices, faces = mesh_data
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    else:
-        mesh = mesh_data
-
-    properties = {
-        "num_vertices": len(mesh.vertices),
-        "num_faces": len(mesh.faces),
-        "volume": mesh.volume if mesh.is_volume else None,
-        "surface_area": mesh.area,
-        "is_watertight": mesh.is_watertight,
-        "is_winding_consistent": mesh.is_winding_consistent,
-        "bounds": {
-            "x_range": (mesh.vertices[:, 0].min(), mesh.vertices[:, 0].max()),
-            "y_range": (mesh.vertices[:, 1].min(), mesh.vertices[:, 1].max()),
-            "z_range": (mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()),
-        },
-        "centroid": mesh.centroid.tolist() if hasattr(mesh, "centroid") else None,
-        "bounding_box_volume": mesh.bounding_box.volume,
-        "convex_hull_volume": mesh.convex_hull.volume if hasattr(mesh, "convex_hull") else None,
-    }
-
-    return properties
-
-
-def mesh_to_zstack(
-    mesh: trimesh.Trimesh, z_resolution: float = 1.0, xy_resolution: float = 0.5, padding: float = 5.0
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """
-    Convert a mesh to a z-stack of binary arrays.
-
-    Args:
-        mesh: Input trimesh object
-        z_resolution: Resolution along z-axis (µm per slice)
-        xy_resolution: Resolution in x-y plane (µm per pixel)
-        padding: Padding around mesh bounds (µm)
-
-    Returns:
-        Tuple of (z_stack, metadata) where:
-        - z_stack: 3D numpy array (z, y, x) with 1 inside neuron, 0 outside
-        - metadata: Dict with spatial information
-    """
-    # Get mesh bounds with padding
-    bounds = mesh.bounds
-    x_min, y_min, z_min = bounds[0] - padding
-    x_max, y_max, z_max = bounds[1] + padding
-
-    # Calculate grid dimensions
-    nx = int(np.ceil((x_max - x_min) / xy_resolution))
-    ny = int(np.ceil((y_max - y_min) / xy_resolution))
-    nz = int(np.ceil((z_max - z_min) / z_resolution))
-
-    # Create coordinate grids
-    x_coords = np.linspace(x_min, x_max, nx)
-    y_coords = np.linspace(y_min, y_max, ny)
-    z_coords = np.linspace(z_min, z_max, nz)
-
-    # Initialize z-stack
-    z_stack = np.zeros((nz, ny, nx), dtype=np.uint8)
-
-    print(f"Creating z-stack: {nz} slices of {ny}x{nx} pixels")
-    print(f"Spatial resolution: {xy_resolution:.1f} µm/pixel, {z_resolution:.1f} µm/slice")
-
-    # Fill z-stack by checking point containment
-    for k, z in enumerate(z_coords):
-        if k % 10 == 0:  # Progress indicator
-            print(f"  Processing slice {k+1}/{nz}")
-
-        for j, y in enumerate(y_coords):
-            for i, x in enumerate(x_coords):
-                point = np.array([x, y, z])
-                z_stack[k, j, i] = 1 if mesh.contains([point])[0] else 0
-
-    # Create metadata
-    metadata = {
-        "z_resolution": z_resolution,
-        "xy_resolution": xy_resolution,
-        "x_coords": x_coords,
-        "y_coords": y_coords,
-        "z_coords": z_coords,
-        "bounds": {"x_range": (x_min, x_max), "y_range": (y_min, y_max), "z_range": (z_min, z_max)},
-        "shape": z_stack.shape,
-        "total_voxels": z_stack.size,
-        "neuron_voxels": np.sum(z_stack),
-        "volume_um3": np.sum(z_stack) * xy_resolution * xy_resolution * z_resolution,
-    }
-
-    return z_stack, metadata
+# Z-stack demo functions
 
 
 def create_cylinder_zstack(
@@ -774,231 +505,77 @@ def create_hole_zstack(
     return z_stack, metadata
 
 
-def visualize_zstack_3d(
-    z_stack: np.ndarray,
-    metadata: Dict[str, Any],
-    title: str = "Z-stack Neuron Morphology",
-    color: str = "lightblue",
-    opacity: float = 0.7,
-    backend: str = "plotly",
-) -> Optional[object]:
+def save_test_meshes(output_dir: str = "test_meshes"):
     """
-    Visualize a z-stack as a 3D volume rendering.
+    Generate and save test meshes to files.
 
     Args:
-        z_stack: 3D binary array (z, y, x)
-        metadata: Metadata dict with coordinate information
-        title: Plot title
-        color: Volume color
-        opacity: Volume opacity
-        backend: Visualization backend
-
-    Returns:
-        Figure object
+        output_dir: Directory to save mesh files
     """
-    if backend == "plotly":
-        try:
-            import plotly.graph_objects as go
+    import os
 
-            # Get coordinates
-            x_coords = metadata["x_coords"]
-            y_coords = metadata["y_coords"]
-            z_coords = metadata["z_coords"]
+    os.makedirs(output_dir, exist_ok=True)
 
-            # Create meshgrid for volume
-            Z, Y, X = np.meshgrid(z_coords, y_coords, x_coords, indexing="ij")
+    print("Generating test meshes...")
 
-            # Flatten arrays for scatter plot
-            mask = z_stack == 1
-            x_points = X[mask]
-            y_points = Y[mask]
-            z_points = Z[mask]
+    # Create cylinder mesh
+    print("  Creating cylinder mesh...")
+    cylinder = create_cylinder_mesh(length=100.0, radius=5.0)
+    cylinder.export(os.path.join(output_dir, "cylinder.stl"))
 
-            # Create 3D scatter plot
-            fig = go.Figure(
-                data=go.Scatter3d(
-                    x=x_points,
-                    y=y_points,
-                    z=z_points,
-                    mode="markers",
-                    marker=dict(size=2, color=color, opacity=opacity),
-                    name="Neuron Volume",
-                )
-            )
+    # Create Y-shaped mesh
+    print("  Creating Y-shaped mesh...")
+    y_shape = create_y_shaped_mesh(trunk_length=60.0, branch_length=40.0)
+    y_shape.export(os.path.join(output_dir, "y_neuron.stl"))
 
-            fig.update_layout(
-                title=title,
-                scene=dict(xaxis_title="X (µm)", yaxis_title="Y (µm)", zaxis_title="Z (µm)", aspectmode="data"),
-            )
+    # Create mesh with hole
+    print("  Creating mesh with hole...")
+    with_hole = create_mesh_with_hole(length=80.0, hole_radius=2.0)
+    with_hole.export(os.path.join(output_dir, "cylinder_with_hole.stl"))
 
-            return fig
+    print(f"Test meshes saved to {output_dir}/")
 
-        except ImportError:
-            print("Plotly not available for z-stack visualization")
-            return None
-
-    else:
-        raise ValueError(f"Backend {backend} not supported for z-stack visualization")
-
-
-def save_zstack_data(z_stack: np.ndarray, metadata: Dict[str, Any], filepath: str, format: str = "npz") -> None:
-    """
-    Save z-stack data to file.
-
-    Args:
-        z_stack: 3D binary array
-        metadata: Metadata dictionary
-        filepath: Output file path
-        format: File format ('npz', 'npy', 'h5')
-    """
-    if format == "npz":
-        np.savez_compressed(filepath, z_stack=z_stack, metadata=metadata)
-    elif format == "npy":
-        np.save(filepath, {"z_stack": z_stack, "metadata": metadata})
-    elif format == "h5":
-        try:
-            import h5py
-
-            with h5py.File(filepath, "w") as f:
-                f.create_dataset("z_stack", data=z_stack, compression="gzip")
-
-                # Save metadata
-                meta_group = f.create_group("metadata")
-                for key, value in metadata.items():
-                    if isinstance(value, dict):
-                        sub_group = meta_group.create_group(key)
-                        for sub_key, sub_value in value.items():
-                            sub_group.create_dataset(sub_key, data=sub_value)
-                    else:
-                        meta_group.create_dataset(key, data=value)
-        except ImportError:
-            raise ImportError("h5py required for HDF5 format")
-    else:
-        raise ValueError(f"Unknown format: {format}")
-
-
-def load_zstack_data(filepath: str, format: str = "npz") -> Tuple[np.ndarray, Dict[str, Any]]:
-    """
-    Load z-stack data from file.
-
-    Args:
-        filepath: Input file path
-        format: File format ('npz', 'npy', 'h5')
-
-    Returns:
-        Tuple of (z_stack, metadata)
-    """
-    if format == "npz":
-        data = np.load(filepath, allow_pickle=True)
-        return data["z_stack"], data["metadata"].item()
-    elif format == "npy":
-        data = np.load(filepath, allow_pickle=True).item()
-        return data["z_stack"], data["metadata"]
-    elif format == "h5":
-        try:
-            import h5py
-
-            with h5py.File(filepath, "r") as f:
-                z_stack = f["z_stack"][:]
-
-                # Load metadata
-                metadata = {}
-                meta_group = f["metadata"]
-                for key in meta_group.keys():
-                    if isinstance(meta_group[key], h5py.Group):
-                        metadata[key] = {}
-                        for sub_key in meta_group[key].keys():
-                            metadata[key][sub_key] = meta_group[key][sub_key][:]
-                    else:
-                        metadata[key] = meta_group[key][:]
-
-                return z_stack, metadata
-        except ImportError:
-            raise ImportError("h5py required for HDF5 format")
-    else:
-        raise ValueError(f"Unknown format: {format}")
-
-
-def load_mesh_file_to_zstack(
-    filepath: str, z_resolution: float = 1.0, xy_resolution: float = 0.5, padding: float = 5.0
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """
-    Load a mesh file and convert it directly to z-stack format.
-    This is the recommended way to import mesh data into GenCoMo.
-
-    Args:
-        filepath: Path to mesh file (.stl, .obj, .ply, etc.)
-        z_resolution: Resolution along z-axis (µm per slice)
-        xy_resolution: Resolution in x-y plane (µm per pixel)
-        padding: Padding around mesh bounds (µm)
-
-    Returns:
-        Tuple of (z_stack, metadata)
-    """
-    print(f"Loading mesh file: {filepath}")
-    mesh = trimesh.load(filepath)
-
-    # Handle scene objects
-    if isinstance(mesh, trimesh.Scene):
-        geometries = list(mesh.geometry.values())
-        if geometries:
-            mesh = geometries[0]
-        else:
-            raise ValueError("No geometry found in mesh file")
-
-    print(f"Converting mesh to GenCoMo's native z-stack format...")
-
-    # Convert to z-stack
-    z_stack, metadata = mesh_to_zstack(mesh, z_resolution, xy_resolution, padding)
-
-    # Add mesh file information to metadata
-    metadata["source_file"] = filepath
-    metadata["morphology_type"] = "imported_from_mesh"
-    metadata["original_mesh_volume"] = mesh.volume if hasattr(mesh, "volume") else None
-    metadata["original_mesh_vertices"] = len(mesh.vertices)
-    metadata["original_mesh_faces"] = len(mesh.faces)
-
-    return z_stack, metadata
-
-
-def analyze_zstack_properties(z_stack: np.ndarray, metadata: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Analyze properties of a z-stack morphology.
-
-    Args:
-        z_stack: 3D binary array (z, y, x)
-        metadata: Metadata dictionary
-
-    Returns:
-        Dictionary of morphology properties
-    """
-    properties = {
-        "shape": z_stack.shape,
-        "total_voxels": z_stack.size,
-        "neuron_voxels": np.sum(z_stack),
-        "volume_um3": metadata.get(
-            "volume_um3", np.sum(z_stack) * metadata.get("xy_resolution", 1.0) ** 2 * metadata.get("z_resolution", 1.0)
-        ),
-        "z_resolution": metadata.get("z_resolution", 1.0),
-        "xy_resolution": metadata.get("xy_resolution", 1.0),
-        "bounds": metadata.get("bounds", {}),
-        "morphology_type": metadata.get("morphology_type", "unknown"),
-        "fill_ratio": np.sum(z_stack) / z_stack.size,
-        "z_extent": z_stack.shape[0] * metadata.get("z_resolution", 1.0),
-        "xy_extent": {
-            "x": z_stack.shape[2] * metadata.get("xy_resolution", 1.0),
-            "y": z_stack.shape[1] * metadata.get("xy_resolution", 1.0),
-        },
+    return {
+        "cylinder": os.path.join(output_dir, "cylinder.stl"),
+        "y_neuron": os.path.join(output_dir, "y_neuron.stl"),
+        "with_hole": os.path.join(output_dir, "cylinder_with_hole.stl"),
     }
 
-    # Add slice-by-slice analysis
-    slice_areas = []
-    for k in range(z_stack.shape[0]):
-        slice_area = np.sum(z_stack[k]) * metadata.get("xy_resolution", 1.0) ** 2
-        slice_areas.append(slice_area)
 
-    properties["slice_areas"] = slice_areas
-    properties["max_cross_section"] = max(slice_areas) if slice_areas else 0
-    properties["min_cross_section"] = min([a for a in slice_areas if a > 0]) if slice_areas else 0
+def save_test_zstacks(output_dir: str = "test_zstacks"):
+    """
+    Generate and save test z-stacks to files.
 
-    return properties
+    Args:
+        output_dir: Directory to save z-stack files
+    """
+    import os
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("Generating test z-stacks...")
+
+    # Create cylinder z-stack
+    print("  Creating cylinder z-stack...")
+    cylinder_zstack, cylinder_metadata = create_cylinder_zstack(length=100.0, radius=5.0)
+    np.savez_compressed(
+        os.path.join(output_dir, "cylinder_zstack.npz"), z_stack=cylinder_zstack, metadata=cylinder_metadata
+    )
+
+    # Create Y-shaped z-stack
+    print("  Creating Y-shaped z-stack...")
+    y_zstack, y_metadata = create_y_shaped_zstack(trunk_length=60.0, branch_length=40.0)
+    np.savez_compressed(os.path.join(output_dir, "y_zstack.npz"), z_stack=y_zstack, metadata=y_metadata)
+
+    # Create z-stack with hole
+    print("  Creating z-stack with hole...")
+    hole_zstack, hole_metadata = create_hole_zstack(length=80.0, hole_radius=3.0)
+    np.savez_compressed(os.path.join(output_dir, "hole_zstack.npz"), z_stack=hole_zstack, metadata=hole_metadata)
+
+    print(f"Test z-stacks saved to {output_dir}/")
+
+    return {
+        "cylinder": os.path.join(output_dir, "cylinder_zstack.npz"),
+        "y_shaped": os.path.join(output_dir, "y_zstack.npz"),
+        "with_hole": os.path.join(output_dir, "hole_zstack.npz"),
+    }
