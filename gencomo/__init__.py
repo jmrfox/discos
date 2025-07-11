@@ -11,6 +11,9 @@ __email__ = "jmrfox@example.com"
 
 from .core import Neuron, Compartment, CompartmentGraph
 
+# Voxel-based modeling
+from .voxels import VoxelModel
+
 # Mesh functions from mesh module
 from .mesh import (
     MeshProcessor,
@@ -45,6 +48,8 @@ from .z_stack import (
     analyze_zstack_properties,
     mesh_to_zstack,
     load_mesh_file_to_zstack,
+    rotate_zstack,
+    rotate_zstack_arbitrary_axis,
 )
 
 

@@ -40,6 +40,7 @@ Requires-Dist: h5py>=3.6.0
 Requires-Dist: ipykernel>=6.29.5
 Requires-Dist: jupyter>=1.1.1
 Requires-Dist: pytest>=8.3.5
+Requires-Dist: voxelmap>=2.1.4
 Provides-Extra: dev
 Requires-Dist: pytest>=6.0; extra == "dev"
 Requires-Dist: pytest-cov; extra == "dev"
@@ -63,12 +64,15 @@ GenCoMo is a Python package for compartmental simulation of neurons with complex
 ## Key Features
 
 - **Mesh-based compartmentalization**: Work directly with neuronal meshes instead of simplified cylinder models
+- **Z-stack conversion**: Convert 3D meshes to binary z-stack representations for analysis
+- **Interactive visualization**: Explore z-stack slices interactively with slider controls
 - **Z-axis slicing**: Automatically slice complex morphologies along the z-axis 
 - **Region detection**: Identify closed regions within each slice for compartment generation
 - **Graph construction**: Build connectivity between compartments across adjacent z-levels
 - **Biophysical simulation**: Solve coupled ODEs for membrane potential using Hodgkin-Huxley dynamics
 - **Flexible stimulation**: Support for complex stimulation protocols
 - **Analysis tools**: Built-in analysis for spike detection, propagation velocity, and more
+- **Demo functions**: Pre-built functions for creating test geometries (cylinders, Y-shapes, meshes with holes)
 
 ## Installation
 
@@ -108,6 +112,11 @@ mesh_processor = MeshProcessor()
 mesh = mesh_processor.load_mesh("path/to/neuron.stl")
 mesh_processor.center_mesh()
 mesh_processor.align_with_z_axis()
+
+# Alternative: Work with z-stack representations
+from gencomo import mesh_to_zstack, visualize_zstack_slices
+zstack = mesh_to_zstack(mesh, resolution=(100, 100, 50))
+visualize_zstack_slices(zstack)  # Interactive slice viewer
 
 # 2. Slice the mesh along z-axis
 slicer = ZAxisSlicer(mesh)
@@ -152,6 +161,24 @@ if results.success:
     print(f"Total spikes: {analysis['overall']['total_spikes']}")
 ```
 
+### Working with Demo Functions
+
+GenCoMo includes built-in demo functions for creating test geometries:
+
+```python
+from gencomo import create_cylinder_mesh, create_y_shaped_mesh, create_mesh_with_hole
+from gencomo import create_cylinder_zstack, visualize_zstack_3d
+
+# Create demo meshes
+cylinder = create_cylinder_mesh(radius=5.0, height=20.0)
+y_shaped = create_y_shaped_mesh(radius=3.0, height=15.0, branch_angle=45.0)
+holey_mesh = create_mesh_with_hole(outer_radius=8.0, inner_radius=3.0, height=10.0)
+
+# Create demo z-stacks directly
+cylinder_zstack = create_cylinder_zstack(radius=5.0, height=20.0, resolution=(64, 64, 32))
+visualize_zstack_3d(cylinder_zstack)  # 3D visualization
+```
+
 ### Command Line Interface
 
 GenCoMo also provides a command-line interface:
@@ -173,12 +200,91 @@ See the `examples/` directory for detailed usage examples:
 
 - `basic_example.py` - Complete workflow with a simple test mesh
 - `advanced_example.py` - Advanced features with real neuronal meshes
+- `z_stack_examples.py` - Working with z-stack representations and interactive visualization
+- `demo_functions.py` - Using built-in demo functions to create test geometries
 
 Run examples:
 ```bash
 cd examples
 python basic_example.py
 python advanced_example.py
+python z_stack_examples.py
+```
+
+## Physical Units
+
+GenCoMo uses consistent units throughout the modeling pipeline. Understanding these units is crucial for setting appropriate parameters and interpreting results.
+
+### Electrical Properties
+- **Voltage**: mV (millivolts)
+- **Current**: nA (nanoamperes) for membrane and stimulus currents
+- **Conductance**: S/cm² (siemens per square centimeter) for membrane conductances
+- **Resistance**: MΩ (megaohms) for axial resistances
+- **Capacitance**: µF/cm² (microfarads per square centimeter) for membrane capacitance
+
+### Geometric Properties
+- **Distance**: µm (micrometers) for all spatial measurements
+- **Area**: µm² (square micrometers) for membrane surface area
+- **Volume**: µm³ (cubic micrometers) for compartment volumes
+
+### Temporal Properties
+- **Time**: ms (milliseconds) for simulation time steps and durations
+- **Frequency**: Hz (hertz) for oscillatory phenomena
+
+### Biophysical Constants
+- **Temperature**: °C (degrees Celsius) for temperature-dependent kinetics
+- **Concentration**: mM (millimolar) for ionic concentrations (when used)
+
+### Fundamental Physics Equations
+
+The units are consistent with the fundamental equations governing neuronal electrophysiology:
+
+**Ohm's Law**:
+$$I = G \times V \rightarrow \text{[nA]} = \text{[S/cm²]} \times \text{[cm²]} \times \text{[mV]} \rightarrow \text{[nA]} = \text{[S]} \times \text{[mV]}$$
+
+Note: 1 S·mV = 1000 nA, so the conversion factor accounts for mV→V scaling.
+
+**Cable Equation (Membrane)**:
+$$C_m \times \frac{dV}{dt} = -I_{ion} + I_{axial} + I_{stim}$$
+$$\text{[µF/cm²]} \times \text{[cm²]} \times \text{[mV/ms]} = \text{[nA]} + \text{[nA]} + \text{[nA]}$$
+$$\text{[µF]} \times \text{[mV/ms]} = \text{[nA]}$$
+
+Since 1 µF·mV/ms = 1000 nA, units are consistent.
+
+**Axial Current (Cable Theory)**:
+$$I_{axial} = \frac{V_1 - V_2}{R_{axial}} \rightarrow \text{[nA]} = \frac{\text{[mV]}}{\text{[MΩ]}}$$
+
+Since 1 mV/MΩ = 1 nA, units check out.
+
+**Conductance-Resistance Relationship**:
+$$G = \frac{1}{R} \rightarrow \text{[S]} = \frac{1}{\text{[Ω]}} \text{ or } \text{[S/cm²]} = \frac{1}{\text{[Ω·cm²]}}$$
+
+**Current Density**:
+$$J = \frac{I}{A} \rightarrow \text{[nA/µm²]} = \frac{\text{[nA]}}{\text{[µm²]}}$$
+
+### Unit Conversions in Code
+The code handles unit conversions automatically where needed:
+- Membrane areas are converted from µm² to cm² (factor of 1e-8) for conductance calculations
+- Currents are scaled appropriately between S and nA units (factor of 1e9 for mV scaling)
+- Spatial coordinates maintain µm units throughout mesh and z-stack operations
+- Capacitance calculations use µF = 1e-6 F for proper scaling with mV and ms
+
+### Example Parameter Values
+```python
+# Typical parameter ranges
+simulator.set_biophysics(
+    capacitance=1.0,        # µF/cm² (membrane capacitance)
+    na_conductance=0.12,    # S/cm² (sodium channel density)
+    k_conductance=0.036,    # S/cm² (potassium channel density)  
+    leak_conductance=0.0003, # S/cm² (leak conductance)
+    temperature=6.3         # °C (experimental temperature)
+)
+
+simulator.add_stimulus(
+    start_time=10.0,        # ms (stimulus onset)
+    duration=1.0,           # ms (stimulus duration)
+    amplitude=5.0           # nA (injected current)
+)
 ```
 
 ## Documentation
@@ -187,7 +293,9 @@ python advanced_example.py
 
 **Mesh Processing**: GenCoMo starts with a 3D mesh representing the neuronal membrane. The mesh is preprocessed (centered, aligned, smoothed) before analysis.
 
-**Z-axis Slicing**: The mesh is sliced along the z-axis at regular intervals to create 2D cross-sections. Each slice contains contours representing the neuronal boundary.
+**Z-axis Slicing**: The mesh is sliced along the z-axis at regular intervals to create 2D cross-sections. Each slice contains contours representing the neuronal boundary. GenCoMo also supports direct z-stack representations as binary 3D arrays.
+
+**Interactive Visualization**: Z-stack data can be explored interactively using built-in visualization functions that provide slider controls for navigating through different z-levels and comparing slices side-by-side.
 
 **Region Detection**: Within each slice, closed regions are identified. These regions become the basis for compartments in the model.
 
@@ -208,6 +316,25 @@ python advanced_example.py
 - `GraphBuilder` - Compartment connectivity construction
 - `ODESystem` - ODE system for biophysical simulation
 - `Simulator` - High-level simulation interface
+
+#### Core Functions by Category
+
+**Mesh Processing**:
+- `visualize_mesh_3d()` - 3D mesh visualization
+- `analyze_mesh_properties()` - Mesh geometry analysis
+
+**Z-stack Operations**:
+- `mesh_to_zstack()` - Convert mesh to z-stack representation
+- `visualize_zstack_3d()` - 3D z-stack visualization  
+- `visualize_zstack_slices()` - Interactive slice viewer with slider controls
+- `compare_zstack_slices()` - Side-by-side slice comparison
+- `save_zstack_data()` / `load_zstack_data()` - Z-stack I/O operations
+- `analyze_zstack_properties()` - Z-stack analysis
+
+**Demo Functions**:
+- `create_cylinder_mesh()`, `create_y_shaped_mesh()`, `create_mesh_with_hole()` - Test geometry creation
+- `create_cylinder_zstack()`, `create_y_shaped_zstack()`, `create_hole_zstack()` - Test z-stack creation
+- `save_test_meshes()`, `save_test_zstacks()` - Save demo data to disk
 
 #### Key Parameters
 
@@ -277,13 +404,16 @@ If you use GenCoMo in your research, please cite:
 
 ## Comparison with Other Tools
 
-| Feature               | GenCoMo | NEURON | Brian2 | Arbor |
-| --------------------- | ------- | ------ | ------ | ----- |
-| Mesh-based morphology | ✅       | ❌      | ❌      | ❌     |
-| SWC support           | 🔲       | ✅      | ✅      | ✅     |
-| Complex geometry      | ✅       | ⚠️      | ⚠️      | ⚠️     |
-| Python native         | ✅       | ⚠️      | ✅      | ⚠️     |
-| GPU acceleration      | 🔲       | ❌      | ⚠️      | ✅     |
+| Feature                   | GenCoMo | NEURON | Brian2 | Arbor |
+| ------------------------- | ------- | ------ | ------ | ----- |
+| Mesh-based morphology     | ✅       | ❌      | ❌      | ❌     |
+| Z-stack representation    | ✅       | ❌      | ❌      | ❌     |
+| Interactive visualization | ✅       | ⚠️      | ⚠️      | ⚠️     |
+| SWC support               | 🔲       | ✅      | ✅      | ✅     |
+| Complex geometry          | ✅       | ⚠️      | ⚠️      | ⚠️     |
+| Python native             | ✅       | ⚠️      | ✅      | ⚠️     |
+| Demo functions            | ✅       | ⚠️      | ⚠️      | ❌     |
+| GPU acceleration          | 🔲       | ❌      | ⚠️      | ✅     |
 
 ✅ Full support, ⚠️ Partial support, ❌ Not supported, 🔲 Planned
 

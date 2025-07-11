@@ -661,3 +661,210 @@ def compare_zstack_slices(
 
     else:
         raise ValueError(f"Backend {backend} not supported for z-stack slice comparison")
+
+
+def rotate_zstack(
+    z_stack: np.ndarray,
+    metadata: Dict[str, Any],
+    angle_x: float = 0.0,
+    angle_y: float = 0.0,
+    angle_z: float = 0.0,
+    order: int = 1,
+    mode: str = "constant",
+    cval: float = 0.0,
+    prefilter: bool = True,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Rotate a z-stack by given angles about the x, y, and/or z axes.
+
+    Args:
+        z_stack: 3D numpy array (z, y, x) with 1 inside neuron, 0 outside
+        metadata: Dictionary with spatial information including resolutions
+        angle_x: Rotation angle about x-axis in degrees
+        angle_y: Rotation angle about y-axis in degrees
+        angle_z: Rotation angle about z-axis in degrees
+        order: Interpolation order (0=nearest, 1=linear, 2=cubic, etc.)
+        mode: How to handle points outside boundary ('constant', 'nearest', 'reflect', 'wrap')
+        cval: Constant value used for points outside boundary when mode='constant'
+        prefilter: Whether to prefilter the input array
+
+    Returns:
+        Tuple of (rotated_z_stack, updated_metadata)
+    """
+    try:
+        from scipy.spatial.transform import Rotation
+        from scipy.ndimage import affine_transform
+    except ImportError:
+        raise ImportError("scipy is required for z-stack rotation. Install with: pip install scipy")
+
+    # Convert angles to radians
+    angles_rad = np.deg2rad([angle_x, angle_y, angle_z])
+
+    # Create rotation object using intrinsic rotations (xyz order)
+    rotation = Rotation.from_euler("xyz", angles_rad, degrees=False)
+    rotation_matrix = rotation.as_matrix()
+
+    # Get current resolutions
+    z_res = metadata.get("z_resolution", 1.0)
+    xy_res = metadata.get("xy_resolution", 1.0)
+
+    # Create scaling matrix to handle anisotropic voxels
+    # Convert to isotropic coordinates for rotation, then back
+    min_res = min(z_res, xy_res)
+    scale_z = z_res / min_res
+    scale_xy = xy_res / min_res
+
+    # Scaling matrices
+    scale_to_iso = np.diag([1 / scale_z, 1 / scale_xy, 1 / scale_xy])
+    scale_from_iso = np.diag([scale_z, scale_xy, scale_xy])
+
+    # Combined transformation matrix
+    transform_matrix = scale_from_iso @ rotation_matrix @ scale_to_iso
+
+    # Get center of z-stack for rotation
+    center = np.array(z_stack.shape) / 2.0
+
+    # Calculate offset to rotate around center
+    offset = center - transform_matrix @ center
+
+    # Apply rotation using affine transformation
+    print(f"🔄 Rotating z-stack by ({angle_x:.1f}°, {angle_y:.1f}°, {angle_z:.1f}°) about (x,y,z) axes...")
+
+    rotated_z_stack = affine_transform(
+        z_stack.astype(np.float32),
+        matrix=transform_matrix,
+        offset=offset,
+        output_shape=z_stack.shape,
+        order=order,
+        mode=mode,
+        cval=cval,
+        prefilter=prefilter,
+    )
+
+    # Convert back to binary and uint8
+    if z_stack.dtype == np.uint8:
+        # Threshold to maintain binary nature
+        rotated_z_stack = (rotated_z_stack > 0.5).astype(np.uint8)
+
+    # Update metadata
+    updated_metadata = metadata.copy()
+
+    # Update coordinate arrays if they exist
+    if all(key in metadata for key in ["x_coords", "y_coords", "z_coords"]):
+        # For now, keep the same coordinate arrays since we're rotating in place
+        # A more sophisticated approach would recalculate the bounds
+        updated_metadata["rotation_applied"] = {
+            "angle_x_degrees": angle_x,
+            "angle_y_degrees": angle_y,
+            "angle_z_degrees": angle_z,
+            "rotation_matrix": rotation_matrix.tolist(),
+            "rotation_order": "xyz",
+        }
+
+    # Update bounds if they exist
+    if "bounds" in metadata:
+        # Keep original bounds for now - in practice you might want to recalculate
+        # based on the rotated geometry
+        updated_metadata["original_bounds"] = metadata["bounds"]
+
+    print(f"✓ Z-stack rotation complete!")
+    print(f"✓ Output shape: {rotated_z_stack.shape}")
+    print(f"✓ Voxel count: {np.sum(rotated_z_stack):,} inside neuron")
+
+    return rotated_z_stack, updated_metadata
+
+
+def rotate_zstack_arbitrary_axis(
+    z_stack: np.ndarray,
+    metadata: Dict[str, Any],
+    axis: np.ndarray,
+    angle: float,
+    order: int = 1,
+    mode: str = "constant",
+    cval: float = 0.0,
+    prefilter: bool = True,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Rotate a z-stack by a given angle about an arbitrary axis.
+
+    Args:
+        z_stack: 3D numpy array (z, y, x) with 1 inside neuron, 0 outside
+        metadata: Dictionary with spatial information
+        axis: 3D vector defining the rotation axis [x, y, z]
+        angle: Rotation angle in degrees
+        order: Interpolation order (0=nearest, 1=linear, 2=cubic, etc.)
+        mode: How to handle points outside boundary
+        cval: Constant value for points outside boundary when mode='constant'
+        prefilter: Whether to prefilter the input array
+
+    Returns:
+        Tuple of (rotated_z_stack, updated_metadata)
+    """
+    try:
+        from scipy.spatial.transform import Rotation
+        from scipy.ndimage import affine_transform
+    except ImportError:
+        raise ImportError("scipy is required for z-stack rotation. Install with: pip install scipy")
+
+    # Normalize the axis vector
+    axis = np.array(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+
+    # Create rotation object using axis-angle representation
+    rotation = Rotation.from_rotvec(np.deg2rad(angle) * axis)
+    rotation_matrix = rotation.as_matrix()
+
+    # Get current resolutions
+    z_res = metadata.get("z_resolution", 1.0)
+    xy_res = metadata.get("xy_resolution", 1.0)
+
+    # Create scaling matrix to handle anisotropic voxels
+    min_res = min(z_res, xy_res)
+    scale_z = z_res / min_res
+    scale_xy = xy_res / min_res
+
+    # Scaling matrices
+    scale_to_iso = np.diag([1 / scale_z, 1 / scale_xy, 1 / scale_xy])
+    scale_from_iso = np.diag([scale_z, scale_xy, scale_xy])
+
+    # Combined transformation matrix
+    transform_matrix = scale_from_iso @ rotation_matrix @ scale_to_iso
+
+    # Get center of z-stack for rotation
+    center = np.array(z_stack.shape) / 2.0
+
+    # Calculate offset to rotate around center
+    offset = center - transform_matrix @ center
+
+    # Apply rotation
+    print(f"🔄 Rotating z-stack by {angle:.1f}° about axis [{axis[0]:.2f}, {axis[1]:.2f}, {axis[2]:.2f}]...")
+
+    rotated_z_stack = affine_transform(
+        z_stack.astype(np.float32),
+        matrix=transform_matrix,
+        offset=offset,
+        output_shape=z_stack.shape,
+        order=order,
+        mode=mode,
+        cval=cval,
+        prefilter=prefilter,
+    )
+
+    # Convert back to binary and uint8 if original was uint8
+    if z_stack.dtype == np.uint8:
+        rotated_z_stack = (rotated_z_stack > 0.5).astype(np.uint8)
+
+    # Update metadata
+    updated_metadata = metadata.copy()
+    updated_metadata["rotation_applied"] = {
+        "axis": axis.tolist(),
+        "angle_degrees": angle,
+        "rotation_matrix": rotation_matrix.tolist(),
+        "rotation_type": "arbitrary_axis",
+    }
+
+    print(f"✓ Z-stack rotation complete!")
+    print(f"✓ Output shape: {rotated_z_stack.shape}")
+    print(f"✓ Voxel count: {np.sum(rotated_z_stack):,} inside neuron")
+
+    return rotated_z_stack, updated_metadata

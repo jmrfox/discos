@@ -1438,6 +1438,7 @@ dependencies = [
     { name = "scipy", version = "1.16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tqdm" },
     { name = "trimesh" },
+    { name = "voxelmap" },
 ]
 
 [package.optional-dependencies]
@@ -1486,6 +1487,7 @@ requires-dist = [
     { name = "sphinx-rtd-theme", marker = "extra == 'dev'" },
     { name = "tqdm", specifier = ">=4.62.0" },
     { name = "trimesh", specifier = ">=3.15.0" },
+    { name = "voxelmap", specifier = ">=2.1.4" },
 ]
 
 [[package]]
@@ -6429,6 +6431,20 @@ resolution-markers = [
 sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795 },
+]
+
+[[package]]
+name = "voxelmap"
+version = "2.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "1.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/9b/e12a31ac3e65e06439ca3e9d4915701bd7d331335578221c984934c54022/voxelmap-2.1.4.tar.gz", hash = "sha256:d3d594f3b1b77f3d8764c3f148a343bdd27f4bb691ba83421de569ac379575b9", size = 13513 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/eb/f0bad4019a3a4112cd95db3ded67992d32d02aece6458c4faeb1ef354b12/voxelmap-2.1.4-py3-none-any.whl", hash = "sha256:c0df5b0a1d8ec76d94997f25bc68f18b9c6857b34f661da11d82e4150c14e6be", size = 19065 },
 ]
 
 [[package]]
