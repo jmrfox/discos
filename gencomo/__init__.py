@@ -25,8 +25,8 @@ from .demos import (
     create_mesh_with_hole,
     save_test_meshes,
     create_cylinder_zstack,
-    create_y_shaped_zstack,
-    create_hole_zstack,
+    create_branching_zstack,
+    create_torus_zstack,
     save_test_zstacks,
 )
 from .slicer import ZAxisSlicer
@@ -75,7 +75,7 @@ __all__ = [
     "save_test_meshes",
     # Demo z-stack functions
     "create_cylinder_zstack",
-    "create_y_shaped_zstack",
+    "create_branching_zstack",
     "create_hole_zstack",
     "save_test_zstacks",
     # Mesh processing functions

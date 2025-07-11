@@ -301,7 +301,7 @@ def create_cylinder_zstack(
     return z_stack, metadata
 
 
-def create_y_shaped_zstack(
+def create_branching_zstack(
     trunk_length: float = 60.0,
     trunk_radius: float = 5.0,
     branch_length: float = 40.0,
@@ -400,102 +400,6 @@ def create_y_shaped_zstack(
             "branch_length": branch_length,
             "branch_radius": branch_radius,
             "branch_angle": branch_angle,
-        },
-        "total_voxels": z_stack.size,
-        "neuron_voxels": np.sum(z_stack),
-        "volume_um3": np.sum(z_stack) * xy_resolution * xy_resolution * z_resolution,
-    }
-
-    return z_stack, metadata
-
-
-def create_hole_zstack(
-    length: float = 80.0,
-    outer_radius: float = 6.0,
-    hole_radius: float = 3.0,
-    hole_position: float = 40.0,
-    hole_direction: str = "x",
-    z_resolution: float = 1.0,
-    xy_resolution: float = 0.5,
-    padding: float = 2.0,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """
-    Create a cylinder with perpendicular hole as a z-stack of binary arrays.
-
-    Args:
-        length: Cylinder length along z-axis (µm)
-        outer_radius: Outer radius of cylinder (µm)
-        hole_radius: Radius of perpendicular hole (µm)
-        hole_position: Z-position where hole is centered (µm)
-        hole_direction: Direction of hole ('x' or 'y')
-        z_resolution: Resolution along z-axis (µm per slice)
-        xy_resolution: Resolution in x-y plane (µm per pixel)
-        padding: Padding around structure (µm)
-
-    Returns:
-        Tuple of (z_stack, metadata)
-    """
-    # Calculate bounds
-    x_min = y_min = -outer_radius - padding
-    x_max = y_max = outer_radius + padding
-    z_min = -padding
-    z_max = length + padding
-
-    nx = int(np.ceil((x_max - x_min) / xy_resolution))
-    ny = int(np.ceil((y_max - y_min) / xy_resolution))
-    nz = int(np.ceil((z_max - z_min) / z_resolution))
-
-    # Create coordinate grids
-    x_coords = np.linspace(x_min, x_max, nx)
-    y_coords = np.linspace(y_min, y_max, ny)
-    z_coords = np.linspace(z_min, z_max, nz)
-
-    # Initialize z-stack
-    z_stack = np.zeros((nz, ny, nx), dtype=np.uint8)
-
-    # Fill cylinder with hole analytically
-    for k, z in enumerate(z_coords):
-        for j, y in enumerate(y_coords):
-            for i, x in enumerate(x_coords):
-                inside = False
-
-                # Check if inside outer cylinder
-                if 0 <= z <= length:
-                    dist_from_axis = np.sqrt(x**2 + y**2)
-                    if dist_from_axis <= outer_radius:
-                        inside = True
-
-                        # Check if inside hole
-                        if hole_direction == "x":
-                            # Hole goes along x-axis
-                            hole_dist = np.sqrt((z - hole_position) ** 2 + y**2)
-                        elif hole_direction == "y":
-                            # Hole goes along y-axis
-                            hole_dist = np.sqrt((z - hole_position) ** 2 + x**2)
-                        else:
-                            raise ValueError(f"Invalid hole_direction: {hole_direction}")
-
-                        if hole_dist <= hole_radius:
-                            inside = False  # Inside the hole, so outside the neuron
-
-                z_stack[k, j, i] = 1 if inside else 0
-
-    # Create metadata
-    metadata = {
-        "morphology_type": "cylinder_with_hole",
-        "z_resolution": z_resolution,
-        "xy_resolution": xy_resolution,
-        "x_coords": x_coords,
-        "y_coords": y_coords,
-        "z_coords": z_coords,
-        "bounds": {"x_range": (x_min, x_max), "y_range": (y_min, y_max), "z_range": (z_min, z_max)},
-        "shape": z_stack.shape,
-        "hole_params": {
-            "length": length,
-            "outer_radius": outer_radius,
-            "hole_radius": hole_radius,
-            "hole_position": hole_position,
-            "hole_direction": hole_direction,
         },
         "total_voxels": z_stack.size,
         "neuron_voxels": np.sum(z_stack),
@@ -639,7 +543,7 @@ def save_test_zstacks(output_dir: str = "test_zstacks"):
 
     # Create Y-shaped z-stack
     print("  Creating Y-shaped z-stack...")
-    y_zstack, y_metadata = create_y_shaped_zstack(trunk_length=60.0, branch_length=40.0)
+    y_zstack, y_metadata = create_branching_zstack(trunk_length=60.0, branch_length=40.0)
     np.savez_compressed(os.path.join(output_dir, "y_zstack.npz"), z_stack=y_zstack, metadata=y_metadata)
 
     # Create z-stack with hole
