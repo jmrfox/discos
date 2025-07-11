@@ -1,3 +1,58 @@
+Metadata-Version: 2.4
+Name: gencomo
+Version: 0.1.0
+Summary: GENeral-morphology COmpartmental MOdeling for complex neuronal simulations
+Home-page: https://github.com/jmrfox/gencomo
+Author: Jordan Fox
+Author-email: Jordan Fox <jmrfox@example.com>
+License: MIT
+Project-URL: Homepage, https://github.com/jmrfox/gencomo
+Project-URL: Documentation, https://github.com/jmrfox/gencomo/wiki
+Project-URL: Repository, https://github.com/jmrfox/gencomo.git
+Project-URL: Bug Tracker, https://github.com/jmrfox/gencomo/issues
+Keywords: neuroscience,simulation,compartmental-modeling,mesh,neuron
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Biology
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: trimesh>=3.15.0
+Requires-Dist: open3d>=0.15.0
+Requires-Dist: meshio>=5.0.0
+Requires-Dist: scikit-image>=0.19.0
+Requires-Dist: opencv-python>=4.5.0
+Requires-Dist: networkx>=2.6
+Requires-Dist: numba>=0.56.0
+Requires-Dist: matplotlib>=3.5.0
+Requires-Dist: plotly>=5.0.0
+Requires-Dist: tqdm>=4.62.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: h5py>=3.6.0
+Requires-Dist: ipykernel>=6.29.5
+Requires-Dist: jupyter>=1.1.1
+Requires-Dist: pytest>=8.3.5
+Provides-Extra: dev
+Requires-Dist: pytest>=6.0; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: black; extra == "dev"
+Requires-Dist: flake8; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: sphinx; extra == "dev"
+Requires-Dist: sphinx-rtd-theme; extra == "dev"
+Dynamic: author
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-python
+
 # GenCoMo: GENeral-morphology COmpartmental MOdeling
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
