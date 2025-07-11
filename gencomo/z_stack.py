@@ -403,12 +403,8 @@ def visualize_zstack_slices(
                         + "<b>Y:</b> %{y:.1f} µm<br>"
                         + "<b>Value:</b> %{z}<br>"
                         + "<extra></extra>",
-                        showscale=True if k == initial_slice else False,
-                        colorbar=(
-                            dict(title="Neuron<br>Presence", tickvals=[0, 1], ticktext=["Outside", "Inside"])
-                            if k == initial_slice
-                            else None
-                        ),
+                        showscale=True,  # Always show colorbar
+                        colorbar=dict(title="Neuron<br>Presence", tickvals=[0, 1], ticktext=["Outside", "Inside"]),
                     )
                 )
 

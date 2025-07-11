@@ -505,6 +505,81 @@ def create_hole_zstack(
     return z_stack, metadata
 
 
+def create_torus_zstack(
+    major_radius: float = 8.0,
+    minor_radius: float = 3.0,
+    center: Tuple[float, float, float] = (0, 0, 0),
+    z_resolution: float = 0.5,
+    xy_resolution: float = 0.5,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Create a torus (donut) z-stack morphology.
+
+    Args:
+        major_radius: Distance from center to tube center (μm)
+        minor_radius: Radius of the tube (μm)
+        center: Center position (x, y, z) in μm
+        z_resolution: Resolution along z-axis (μm per slice)
+        xy_resolution: Resolution in x-y plane (μm per pixel)
+
+    Returns:
+        Tuple of (z_stack, metadata)
+    """
+    # Calculate grid bounds
+    max_radius = major_radius + minor_radius
+    padding = 2.0
+
+    x_min, y_min, z_min = -max_radius - padding, -max_radius - padding, -minor_radius - padding
+    x_max, y_max, z_max = max_radius + padding, max_radius + padding, minor_radius + padding
+
+    # Calculate grid dimensions
+    nx = int(np.ceil((x_max - x_min) / xy_resolution))
+    ny = int(np.ceil((y_max - y_min) / xy_resolution))
+    nz = int(np.ceil((z_max - z_min) / z_resolution))
+
+    # Create coordinate grids
+    x_coords = np.linspace(x_min, x_max, nx)
+    y_coords = np.linspace(y_min, y_max, ny)
+    z_coords = np.linspace(z_min, z_max, nz)
+
+    # Initialize z-stack
+    z_stack = np.zeros((nz, ny, nx), dtype=np.uint8)
+
+    # Fill torus
+    for k, z in enumerate(z_coords):
+        for j, y in enumerate(y_coords):
+            for i, x in enumerate(x_coords):
+                # Distance from z-axis
+                rho = np.sqrt(x**2 + y**2)
+
+                # Distance from torus center circle
+                distance_to_tube = np.sqrt((rho - major_radius) ** 2 + z**2)
+
+                # Inside torus if distance to tube < minor_radius
+                if distance_to_tube <= minor_radius:
+                    z_stack[k, j, i] = 1
+
+    # Create metadata
+    metadata = {
+        "major_radius": major_radius,
+        "minor_radius": minor_radius,
+        "center": center,
+        "z_resolution": z_resolution,
+        "xy_resolution": xy_resolution,
+        "x_coords": x_coords,
+        "y_coords": y_coords,
+        "z_coords": z_coords,
+        "bounds": (x_min, x_max, y_min, y_max, z_min, z_max),
+        "shape": z_stack.shape,
+        "morphology_type": "torus",
+        "total_voxels": z_stack.size,
+        "neuron_voxels": np.sum(z_stack),
+        "volume_um3": np.sum(z_stack) * xy_resolution * xy_resolution * z_resolution,
+    }
+
+    return z_stack, metadata
+
+
 def save_test_meshes(output_dir: str = "test_meshes"):
     """
     Generate and save test meshes to files.
@@ -572,10 +647,16 @@ def save_test_zstacks(output_dir: str = "test_zstacks"):
     hole_zstack, hole_metadata = create_hole_zstack(length=80.0, hole_radius=3.0)
     np.savez_compressed(os.path.join(output_dir, "hole_zstack.npz"), z_stack=hole_zstack, metadata=hole_metadata)
 
+    # Create torus z-stack
+    print("  Creating torus z-stack...")
+    torus_zstack, torus_metadata = create_torus_zstack(major_radius=8.0, minor_radius=3.0)
+    np.savez_compressed(os.path.join(output_dir, "torus_zstack.npz"), z_stack=torus_zstack, metadata=torus_metadata)
+
     print(f"Test z-stacks saved to {output_dir}/")
 
     return {
         "cylinder": os.path.join(output_dir, "cylinder_zstack.npz"),
         "y_shaped": os.path.join(output_dir, "y_zstack.npz"),
         "with_hole": os.path.join(output_dir, "hole_zstack.npz"),
+        "torus": os.path.join(output_dir, "torus_zstack.npz"),
     }
