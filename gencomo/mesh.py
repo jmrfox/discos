@@ -266,7 +266,7 @@ def visualize_mesh_3d(
     title: str = "Neuronal Mesh",
     show_wireframe: bool = False,
     color: str = "lightblue",
-    backend: str = "plotly",
+    backend: str = "trimesh",
 ) -> Optional[object]:
     """
     Visualize a 3D mesh using various backends.
@@ -300,7 +300,7 @@ def visualize_mesh_3d(
     elif backend == "plotly":
         return _visualize_plotly(mesh, title, color)
     elif backend == "trimesh":
-        return _visualize_trimesh(mesh, title)
+        return _visualize_trimesh(mesh, title, color)
     else:
         raise ValueError(f"Unknown backend: {backend}")
 
@@ -392,20 +392,61 @@ def _visualize_plotly(mesh: trimesh.Trimesh, title: str, color: str):
         return None
 
 
-def _visualize_trimesh(mesh: trimesh.Trimesh, title: str):
-    """Visualize using trimesh's built-in viewer."""
+def _visualize_trimesh(mesh: trimesh.Trimesh, title: str, color: str = "lightblue"):
+    """Visualize using trimesh Scene with enhanced features."""
     try:
-        scene = trimesh.Scene([mesh])
-        return scene.show(caption=title)
+        # Create a copy of the mesh to avoid modifying the original
+        viz_mesh = mesh.copy()
+
+        # Set mesh color
+        if color:
+            # Convert color name to RGB if needed
+            color_map = {
+                "lightblue": [173, 216, 230],
+                "orange": [255, 165, 0],
+                "lightgreen": [144, 238, 144],
+                "purple": [128, 0, 128],
+                "red": [255, 0, 0],
+                "blue": [0, 0, 255],
+                "green": [0, 255, 0],
+                "yellow": [255, 255, 0],
+                "pink": [255, 192, 203],
+                "cyan": [0, 255, 255],
+            }
+
+            if color in color_map:
+                rgb_color = color_map[color]
+            else:
+                # Default to light blue if color not found
+                rgb_color = [173, 216, 230]
+
+            # Set visual properties
+            viz_mesh.visual.face_colors = rgb_color + [255]  # RGBA
+
+        # Create scene with the mesh
+        scene = trimesh.Scene([viz_mesh])
+
+        # Set scene metadata
+        scene.metadata["title"] = title
+
+        # Show the scene
+        return scene
+
     except Exception as e:
         print(f"Trimesh visualization failed: {e}")
-        return None
+        print("Falling back to basic mesh display...")
+        try:
+            # Fallback to simple show
+            return mesh.show()
+        except:
+            print("All trimesh visualization methods failed")
+            return None
 
 
 # Mesh utility functions
 
 
-def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]]) -> dict:
+def analyze_mesh(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]]) -> dict:
     """
     Analyze and return mesh properties for diagnostic purposes.
 
@@ -413,7 +454,7 @@ def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, 
         mesh_data: Either a Trimesh object or (vertices, faces) tuple
 
     Returns:
-        Dictionary of mesh properties
+        Dictionary of mesh properties including topological genus
     """
     # Convert to mesh object if needed
     if isinstance(mesh_data, tuple):
@@ -422,13 +463,73 @@ def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, 
     else:
         mesh = mesh_data
 
+    # Fix mesh if needed for volume calculation
+    try:
+        # Try to make the mesh watertight if it isn't
+        if not mesh.is_watertight:
+            # Fill small holes and fix normals
+            mesh.fill_holes()
+            mesh.fix_normals()
+    except:
+        pass  # If fixing fails, continue with original mesh
+
+    # Calculate volume more robustly
+    volume = None
+    try:
+        if mesh.is_volume and mesh.is_watertight:
+            volume = mesh.volume
+        elif hasattr(mesh, "volume") and mesh.volume > 0:
+            volume = abs(mesh.volume)  # Take absolute value in case of negative volume
+        else:
+            # Fallback: try to calculate volume even if not marked as watertight
+            try:
+                vol = mesh.volume
+                if vol is not None and not np.isnan(vol):
+                    volume = abs(vol)
+            except:
+                volume = None
+    except:
+        volume = None
+
+    # Calculate topological genus using Euler characteristic
+    # Genus = (2 - V + E - F) / 2, where V = vertices, E = edges, F = faces
+    genus = None
+    try:
+        V = len(mesh.vertices)
+        F = len(mesh.faces)
+        # Calculate number of edges
+        edges = set()
+        for face in mesh.faces:
+            for i in range(3):
+                edge = tuple(sorted([face[i], face[(i + 1) % 3]]))
+                edges.add(edge)
+        E = len(edges)
+
+        # Euler characteristic for a surface: χ = V - E + F
+        euler_char = V - E + F
+
+        # For a closed surface: genus = (2 - χ) / 2
+        # For multiple connected components: genus = (2 - χ + 2*(components - 1)) / 2
+        # Simplifying for single component: genus = (2 - χ) / 2
+        genus = (2 - euler_char) // 2
+
+        # Ensure genus is non-negative
+        if genus < 0:
+            genus = 0
+
+    except Exception as e:
+        genus = None
+
     properties = {
         "num_vertices": len(mesh.vertices),
         "num_faces": len(mesh.faces),
-        "volume": mesh.volume if mesh.is_volume else None,
+        "num_edges": len(edges) if "edges" in locals() else None,
+        "volume": volume,
         "surface_area": mesh.area,
         "is_watertight": mesh.is_watertight,
         "is_winding_consistent": mesh.is_winding_consistent,
+        "euler_characteristic": euler_char if "euler_char" in locals() else None,
+        "genus": genus,
         "bounds": {
             "x_range": (mesh.vertices[:, 0].min(), mesh.vertices[:, 0].max()),
             "y_range": (mesh.vertices[:, 1].min(), mesh.vertices[:, 1].max()),
@@ -436,8 +537,16 @@ def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, 
         },
         "centroid": mesh.centroid.tolist() if hasattr(mesh, "centroid") else None,
         "bounding_box_volume": mesh.bounding_box.volume,
-        "convex_hull_volume": mesh.convex_hull.volume if hasattr(mesh, "convex_hull") else None,
     }
+
+    # Add convex hull volume safely
+    try:
+        if hasattr(mesh, "convex_hull") and mesh.convex_hull is not None:
+            properties["convex_hull_volume"] = mesh.convex_hull.volume
+        else:
+            properties["convex_hull_volume"] = None
+    except:
+        properties["convex_hull_volume"] = None
 
     return properties
 

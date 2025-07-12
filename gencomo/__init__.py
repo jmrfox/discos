@@ -15,7 +15,7 @@ from .core import Neuron, Compartment, CompartmentGraph
 from .mesh import (
     MeshProcessor,
     visualize_mesh_3d,
-    analyze_mesh_properties,
+    analyze_mesh,
     visualize_mesh_slice_interactive,
     visualize_mesh_slice_grid,
 )
@@ -44,7 +44,7 @@ __all__ = [
     # Mesh processing (primary 3D representation)
     "MeshProcessor",
     "visualize_mesh_3d",
-    "analyze_mesh_properties",
+    "analyze_mesh",
     "visualize_mesh_slice_interactive",
     "visualize_mesh_slice_grid",
     # Demo mesh functions

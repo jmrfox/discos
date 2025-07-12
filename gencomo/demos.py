@@ -197,10 +197,9 @@ def create_branching_mesh(
         translation = trimesh.transformations.translation_matrix(translation_vector)
         branch.apply_transform(translation)
 
-        branches.append(branch)
-
-    # Combine using boolean union operations for clean exterior surface
+        branches.append(branch)  # Combine using boolean union operations for clean exterior surface
     all_meshes = [trunk] + branches
+
     try:
         # Use boolean union to combine all overlapping shapes cleanly
         combined = trimesh.boolean.union(all_meshes)
@@ -209,13 +208,10 @@ def create_branching_mesh(
         warnings.warn(f"Boolean union failed: {e}, using concatenation")
         combined = trimesh.util.concatenate(all_meshes)
 
-    # Light cleanup to remove any duplicate faces from concatenation fallback
-    combined = _clean_exterior_mesh(combined)
-
     # Smooth junctions if requested
     if smooth_junctions:
         try:
-            # Apply smoothing to reduce sharp edges at junctions
+            # Apply light smoothing to reduce sharp edges at junctions
             combined = combined.smoothed()
         except:
             # If smoothing fails, continue with unsmoothed mesh
