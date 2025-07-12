@@ -1,260 +1,343 @@
 """
 Demo mesh generation functions for GenCoMo.
 
-Provides specific example mesh generators for testing and demonstration purposes.
-These functions create standard neuronal morphologies for tutorials and examples.
+Provides example mesh generators for neuronal morphologies using trimesh.
+These functions create standard geometries for tutorials and demonstrations.
 """
 
 import numpy as np
-from typing import Tuple, Union, Dict, Any
+import trimesh
+from typing import Tuple, Optional, Dict, Any, List
 import warnings
 
-# Z-stack demo functions
 
-
-def create_cylinder_zstack(
+def create_cylinder_mesh(
     length: float = 100.0,
     radius: float = 5.0,
-    z_resolution: float = 1.0,
-    xy_resolution: float = 0.5,
-    padding: float = 2.0,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+    resolution: int = 16,
+    center: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    axis: str = "z",
+) -> trimesh.Trimesh:
     """
-    Create a cylindrical neuron as a z-stack of binary arrays.
+    Create a cylindrical mesh representing a simple neuronal process.
 
     Args:
-        length: Cylinder length along z-axis (µm)
-        radius: Cylinder radius (µm)
-        z_resolution: Resolution along z-axis (µm per slice)
-        xy_resolution: Resolution in x-y plane (µm per pixel)
-        padding: Padding around cylinder (µm)
+        length: Cylinder length (μm)
+        radius: Cylinder radius (μm)
+        resolution: Number of circumferential segments
+        center: Center position (x, y, z) in μm
+        axis: Primary axis ('x', 'y', or 'z')
 
     Returns:
-        Tuple of (z_stack, metadata)
+        Trimesh cylinder object
     """
-    # Calculate grid dimensions
-    x_min, x_max = -radius - padding, radius + padding
-    y_min, y_max = -radius - padding, radius + padding
-    z_min, z_max = -padding, length + padding
+    # Create cylinder along z-axis first
+    cylinder = trimesh.creation.cylinder(radius=radius, height=length, sections=resolution)
 
-    nx = int(np.ceil((x_max - x_min) / xy_resolution))
-    ny = int(np.ceil((y_max - y_min) / xy_resolution))
-    nz = int(np.ceil((z_max - z_min) / z_resolution))
+    # Rotate to desired axis if needed
+    if axis.lower() == "x":
+        # Rotate 90 degrees around y-axis to align with x
+        rotation = trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0])
+        cylinder.apply_transform(rotation)
+    elif axis.lower() == "y":
+        # Rotate 90 degrees around x-axis to align with y
+        rotation = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+        cylinder.apply_transform(rotation)
+    # z-axis is default, no rotation needed
 
-    # Create coordinate grids
-    x_coords = np.linspace(x_min, x_max, nx)
-    y_coords = np.linspace(y_min, y_max, ny)
-    z_coords = np.linspace(z_min, z_max, nz)
+    # Translate to center position
+    if center != (0.0, 0.0, 0.0):
+        translation = trimesh.transformations.translation_matrix(center)
+        cylinder.apply_transform(translation)
 
-    # Initialize z-stack
-    z_stack = np.zeros((nz, ny, nx), dtype=np.uint8)
+    # Add metadata
+    cylinder.metadata["morphology_type"] = "cylinder"
+    cylinder.metadata["length"] = length
+    cylinder.metadata["radius"] = radius
+    cylinder.metadata["volume_theoretical"] = np.pi * radius**2 * length
+    cylinder.metadata["surface_area_theoretical"] = 2 * np.pi * radius * (radius + length)
+    cylinder.metadata["center"] = center
+    cylinder.metadata["axis"] = axis
 
-    # Fill cylinder analytically
-    for k, z in enumerate(z_coords):
-        if 0 <= z <= length:  # Within cylinder z-range
-            for j, y in enumerate(y_coords):
-                for i, x in enumerate(x_coords):
-                    # Check if point is inside cylinder
-                    distance_from_axis = np.sqrt(x**2 + y**2)
-                    z_stack[k, j, i] = 1 if distance_from_axis <= radius else 0
-
-    # Create metadata
-    metadata = {
-        "morphology_type": "cylinder",
-        "z_resolution": z_resolution,
-        "xy_resolution": xy_resolution,
-        "x_coords": x_coords,
-        "y_coords": y_coords,
-        "z_coords": z_coords,
-        "bounds": {"x_range": (x_min, x_max), "y_range": (y_min, y_max), "z_range": (z_min, z_max)},
-        "shape": z_stack.shape,
-        "cylinder_params": {"length": length, "radius": radius},
-        "total_voxels": z_stack.size,
-        "neuron_voxels": np.sum(z_stack),
-        "volume_um3": np.sum(z_stack) * xy_resolution * xy_resolution * z_resolution,
-    }
-
-    return z_stack, metadata
+    return cylinder
 
 
-def create_branching_zstack(
+def _clean_exterior_mesh(combined_mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """
+    Clean up a mesh to remove interior artifacts while preserving geometry.
+    Only removes duplicate faces and merges very close vertices.
+    """
+    try:
+        # Remove duplicate faces (this helps with overlapping geometry)
+        combined_mesh.remove_duplicate_faces()
+
+        # Remove unreferenced vertices
+        combined_mesh.remove_unreferenced_vertices()
+
+        # Merge vertices that are very close together (helps at junctions)
+        # Use a small tolerance to avoid changing the geometry significantly
+        combined_mesh.merge_vertices(merge_tex=True, merge_norm=True)
+
+        return combined_mesh
+
+    except Exception as e:
+        warnings.warn(f"Mesh cleanup failed: {e}")
+        return combined_mesh
+
+
+def create_branching_mesh(
     trunk_length: float = 60.0,
     trunk_radius: float = 5.0,
     branch_length: float = 40.0,
     branch_radius: float = 3.0,
     branch_angle: float = 45.0,
-    z_resolution: float = 1.0,
-    xy_resolution: float = 0.5,
-    padding: float = 3.0,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+    num_branches: int = 2,
+    resolution: int = 12,
+    smooth_junctions: bool = True,
+) -> trimesh.Trimesh:
     """
-    Create a Y-shaped neuron as a z-stack of binary arrays.
+    Create a branching mesh representing a dendritic or axonal tree.
 
     Args:
-        trunk_length: Length of main trunk (µm)
-        trunk_radius: Radius of trunk (µm)
-        branch_length: Length of each branch (µm)
-        branch_radius: Radius of branches (µm)
-        branch_angle: Angle of branches from vertical (degrees)
-        z_resolution: Resolution along z-axis (µm per slice)
-        xy_resolution: Resolution in x-y plane (µm per pixel)
-        padding: Padding around structure (µm)
+        trunk_length: Length of main trunk (μm)
+        trunk_radius: Radius of main trunk (μm)
+        branch_length: Length of each branch (μm)
+        branch_radius: Radius of each branch (μm)
+        branch_angle: Angle of branches from trunk axis (degrees)
+        num_branches: Number of branches (2 for Y-shape, more for multi-branch)
+        resolution: Number of circumferential segments
+        smooth_junctions: Whether to smooth branch junctions
 
     Returns:
-        Tuple of (z_stack, metadata)
+        Trimesh object with branching structure
     """
-    # Convert angle to radians
-    angle_rad = np.radians(branch_angle)
+    # Create main trunk along z-axis
+    trunk = trimesh.creation.cylinder(radius=trunk_radius, height=trunk_length, sections=resolution)
 
-    # Calculate bounds
-    max_branch_x = branch_length * np.sin(angle_rad)
-    max_radius = max(trunk_radius, branch_radius)
+    # Position trunk so top is at z=trunk_length
+    trunk_translation = trimesh.transformations.translation_matrix([0, 0, trunk_length / 2])
+    trunk.apply_transform(trunk_translation)
 
-    x_min = -max_branch_x - max_radius - padding
-    x_max = max_branch_x + max_radius + padding
-    y_min = -max_radius - padding
-    y_max = max_radius + padding
-    z_min = -padding
-    z_max = trunk_length + branch_length * np.cos(angle_rad) + padding
+    # Create branches
+    branches = []
+    for i in range(num_branches):
+        # Create branch cylinder (initially centered at origin along z-axis)
+        branch = trimesh.creation.cylinder(radius=branch_radius, height=branch_length, sections=max(8, resolution // 2))
 
-    nx = int(np.ceil((x_max - x_min) / xy_resolution))
-    ny = int(np.ceil((y_max - y_min) / xy_resolution))
-    nz = int(np.ceil((z_max - z_min) / z_resolution))
+        # Calculate branch angle in radians
+        angle_rad = np.radians(branch_angle)
 
-    # Create coordinate grids
-    x_coords = np.linspace(x_min, x_max, nx)
-    y_coords = np.linspace(y_min, y_max, ny)
-    z_coords = np.linspace(z_min, z_max, nz)
+        # Calculate rotation angle around z-axis for this branch
+        azimuth_angle = (2 * np.pi * i) / num_branches
 
-    # Initialize z-stack
-    z_stack = np.zeros((nz, ny, nx), dtype=np.uint8)
+        # Step 1: Rotate the branch around its center to desired angle
+        # Rotate around axis perpendicular to both z-axis and the desired branch direction
+        rotation_axis = [np.cos(azimuth_angle), np.sin(azimuth_angle), 0]
+        rotation = trimesh.transformations.rotation_matrix(angle_rad, rotation_axis)
+        branch.apply_transform(rotation)
 
-    # Fill Y-shape analytically
-    for k, z in enumerate(z_coords):
-        for j, y in enumerate(y_coords):
-            for i, x in enumerate(x_coords):
-                inside = False
+        # Step 2: Calculate where the bottom of the rotated branch is now
+        # The original bottom was at [0, 0, -branch_length/2]
+        original_bottom = np.array([0, 0, -branch_length / 2, 1])  # homogeneous coordinates
+        rotated_bottom = rotation @ original_bottom
 
-                # Check trunk
-                if 0 <= z <= trunk_length:
-                    dist_from_trunk = np.sqrt(x**2 + y**2)
-                    if dist_from_trunk <= trunk_radius:
-                        inside = True
+        # Step 3: Translate so the bottom of the branch is at trunk top
+        # We want rotated_bottom to be at [0, 0, trunk_length]
+        target_bottom = np.array([0, 0, trunk_length])
+        translation_vector = target_bottom - rotated_bottom[:3]
+        translation = trimesh.transformations.translation_matrix(translation_vector)
+        branch.apply_transform(translation)
 
-                # Check branches
-                if z > trunk_length:
-                    branch_z = z - trunk_length
-                    max_branch_z = branch_length * np.cos(angle_rad)
+        branches.append(branch)
 
-                    if branch_z <= max_branch_z:
-                        # Branch 1 (positive x direction)
-                        branch1_center_x = branch_z * np.tan(angle_rad)
-                        dist_from_branch1 = np.sqrt((x - branch1_center_x) ** 2 + y**2)
+    # Combine using boolean union operations for clean exterior surface
+    all_meshes = [trunk] + branches
+    try:
+        # Try boolean union for clean exterior surface
+        combined = trunk
+        for branch in branches:
+            combined = combined.union(branch)
+    except Exception as e:
+        # If union fails, fall back to concatenation
+        warnings.warn(f"Union operation failed: {e}, using concatenation")
+        combined = trimesh.util.concatenate(all_meshes)
 
-                        # Branch 2 (negative x direction)
-                        branch2_center_x = -branch_z * np.tan(angle_rad)
-                        dist_from_branch2 = np.sqrt((x - branch2_center_x) ** 2 + y**2)
+    # Light cleanup to remove any duplicate faces from concatenation fallback
+    combined = _clean_exterior_mesh(combined)
 
-                        if dist_from_branch1 <= branch_radius or dist_from_branch2 <= branch_radius:
-                            inside = True
+    # Smooth junctions if requested
+    if smooth_junctions:
+        try:
+            # Apply smoothing to reduce sharp edges at junctions
+            combined = combined.smoothed()
+        except:
+            # If smoothing fails, continue with unsmoothed mesh
+            warnings.warn("Could not smooth branch junctions, using unsmoothed mesh")
 
-                z_stack[k, j, i] = 1 if inside else 0
+    # Add metadata
+    combined.metadata["morphology_type"] = "branching"
+    combined.metadata["trunk_length"] = trunk_length
+    combined.metadata["trunk_radius"] = trunk_radius
+    combined.metadata["branch_length"] = branch_length
+    combined.metadata["branch_radius"] = branch_radius
+    combined.metadata["branch_angle"] = branch_angle
+    combined.metadata["num_branches"] = num_branches
+    combined.metadata["total_branches"] = num_branches
+    combined.metadata["smooth_junctions"] = smooth_junctions
 
-    # Create metadata
-    metadata = {
-        "morphology_type": "y_shaped",
-        "z_resolution": z_resolution,
-        "xy_resolution": xy_resolution,
-        "x_coords": x_coords,
-        "y_coords": y_coords,
-        "z_coords": z_coords,
-        "bounds": {"x_range": (x_min, x_max), "y_range": (y_min, y_max), "z_range": (z_min, z_max)},
-        "shape": z_stack.shape,
-        "y_params": {
-            "trunk_length": trunk_length,
-            "trunk_radius": trunk_radius,
-            "branch_length": branch_length,
-            "branch_radius": branch_radius,
-            "branch_angle": branch_angle,
-        },
-        "total_voxels": z_stack.size,
-        "neuron_voxels": np.sum(z_stack),
-        "volume_um3": np.sum(z_stack) * xy_resolution * xy_resolution * z_resolution,
-    }
+    # Calculate theoretical properties
+    trunk_volume = np.pi * trunk_radius**2 * trunk_length
+    branch_volume = np.pi * branch_radius**2 * branch_length
+    total_volume = trunk_volume + num_branches * branch_volume
 
-    return z_stack, metadata
+    combined.metadata["volume_theoretical"] = total_volume
+    combined.metadata["trunk_volume"] = trunk_volume
+    combined.metadata["branch_volume"] = branch_volume
+
+    return combined
 
 
-def create_torus_zstack(
-    major_radius: float = 8.0,
-    minor_radius: float = 3.0,
-    center: Tuple[float, float, float] = (0, 0, 0),
-    z_resolution: float = 0.5,
-    xy_resolution: float = 0.5,
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+def save_demo_meshes(output_dir: str = "demo_meshes") -> Dict[str, str]:
     """
-    Create a torus (donut) z-stack morphology.
+    Generate and save example meshes to files.
 
     Args:
-        major_radius: Distance from center to tube center (μm)
-        minor_radius: Radius of the tube (μm)
-        center: Center position (x, y, z) in μm
-        z_resolution: Resolution along z-axis (μm per slice)
-        xy_resolution: Resolution in x-y plane (μm per pixel)
+        output_dir: Directory to save mesh files
 
     Returns:
-        Tuple of (z_stack, metadata)
+        Dictionary mapping mesh names to file paths
     """
-    # Calculate grid bounds
-    max_radius = major_radius + minor_radius
-    padding = 2.0
+    import os
 
-    x_min, y_min, z_min = -max_radius - padding, -max_radius - padding, -minor_radius - padding
-    x_max, y_max, z_max = max_radius + padding, max_radius + padding, minor_radius + padding
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Calculate grid dimensions
-    nx = int(np.ceil((x_max - x_min) / xy_resolution))
-    ny = int(np.ceil((y_max - y_min) / xy_resolution))
-    nz = int(np.ceil((z_max - z_min) / z_resolution))
+    print("🔧 Generating demo meshes...")
 
-    # Create coordinate grids
-    x_coords = np.linspace(x_min, x_max, nx)
-    y_coords = np.linspace(y_min, y_max, ny)
-    z_coords = np.linspace(z_min, z_max, nz)
+    # Create cylinder mesh
+    print("  Creating cylinder mesh...")
+    cylinder = create_cylinder_mesh(length=100.0, radius=5.0, resolution=16)
+    cylinder_path = os.path.join(output_dir, "cylinder.stl")
+    cylinder.export(cylinder_path)
 
-    # Initialize z-stack
-    z_stack = np.zeros((nz, ny, nx), dtype=np.uint8)
+    # Create Y-branching mesh
+    print("  Creating Y-branching mesh...")
+    y_branch = create_branching_mesh(
+        trunk_length=60.0, trunk_radius=5.0, branch_length=40.0, branch_radius=3.0, branch_angle=45.0, num_branches=2
+    )
+    y_branch_path = os.path.join(output_dir, "y_branch.stl")
+    y_branch.export(y_branch_path)
 
-    # Fill torus
-    for k, z in enumerate(z_coords):
-        for j, y in enumerate(y_coords):
-            for i, x in enumerate(x_coords):
-                # Distance from z-axis
-                rho = np.sqrt(x**2 + y**2)
+    # Create multi-branching mesh
+    print("  Creating multi-branching mesh...")
+    multi_branch = create_branching_mesh(
+        trunk_length=80.0, trunk_radius=6.0, branch_length=35.0, branch_radius=3.5, branch_angle=60.0, num_branches=4
+    )
+    multi_branch_path = os.path.join(output_dir, "multi_branch.stl")
+    multi_branch.export(multi_branch_path)
 
-                # Distance from torus center circle
-                distance_to_tube = np.sqrt((rho - major_radius) ** 2 + z**2)
+    print(f"✅ Demo meshes saved to {output_dir}/")
 
-                # Inside torus if distance to tube < minor_radius
-                if distance_to_tube <= minor_radius:
-                    z_stack[k, j, i] = 1
+    return {"cylinder": cylinder_path, "y_branch": y_branch_path, "multi_branch": multi_branch_path}
 
-    # Create metadata
-    metadata = {
-        "major_radius": major_radius,
-        "minor_radius": minor_radius,
-        "center": center,
-        "z_resolution": z_resolution,
-        "xy_resolution": xy_resolution,
-        "x_coords": x_coords,
-        "y_coords": y_coords,
-        "z_coords": z_coords,
-        "bounds": (x_min, x_max, y_min, y_max, z_min, z_max),
-        "shape": z_stack.shape,
-        "morphology_type": "torus",
-        "total_voxels": z_stack.size,
-        "neuron_voxels": np.sum(z_stack),
-        "volume_um3": np.sum(z_stack) * xy_resolution * xy_resolution * z_resolution,
-    }
 
-    return z_stack, metadata
+def create_demo_neuron_mesh(
+    soma_radius: float = 10.0,
+    dendrite_length: float = 50.0,
+    dendrite_radius: float = 2.0,
+    axon_length: float = 100.0,
+    axon_radius: float = 1.5,
+    num_dendrites: int = 4,
+    dendrite_angle: float = 30.0,
+) -> trimesh.Trimesh:
+    """
+    Create a simplified neuron mesh with soma, dendrites, and axon.
+
+    Args:
+        soma_radius: Radius of soma (cell body) in μm
+        dendrite_length: Length of each dendrite in μm
+        dendrite_radius: Radius of dendrites in μm
+        axon_length: Length of axon in μm
+        axon_radius: Radius of axon in μm
+        num_dendrites: Number of dendrites
+        dendrite_angle: Angle of dendrites from vertical (degrees)
+
+    Returns:
+        Trimesh object representing a simple neuron
+    """
+    # Create soma (cell body) as sphere
+    soma = trimesh.creation.icosphere(subdivisions=2, radius=soma_radius)
+
+    # Create axon extending downward
+    axon = trimesh.creation.cylinder(radius=axon_radius, height=axon_length, sections=12)
+
+    # Position axon extending down from soma
+    axon_translation = trimesh.transformations.translation_matrix([0, 0, -axon_length / 2])
+    axon.apply_transform(axon_translation)
+
+    # Create dendrites extending upward
+    dendrites = []
+    for i in range(num_dendrites):
+        dendrite = trimesh.creation.cylinder(radius=dendrite_radius, height=dendrite_length, sections=8)
+
+        # Calculate rotation for this dendrite
+        azimuth_angle = (2 * np.pi * i) / num_dendrites
+        tilt_angle = np.radians(dendrite_angle)
+
+        # Step 1: Rotate dendrite around its center to desired angle
+        # Rotate around axis perpendicular to both z-axis and the desired dendrite direction
+        rotation_axis = [np.cos(azimuth_angle), np.sin(azimuth_angle), 0]
+        rotation = trimesh.transformations.rotation_matrix(tilt_angle, rotation_axis)
+        dendrite.apply_transform(rotation)
+
+        # Step 2: Calculate where the bottom of the rotated dendrite is now
+        # The original bottom was at [0, 0, -dendrite_length/2]
+        original_bottom = np.array([0, 0, -dendrite_length / 2, 1])  # homogeneous coordinates
+        rotated_bottom = rotation @ original_bottom
+
+        # Step 3: Translate so the bottom of the dendrite is at soma surface
+        # We want rotated_bottom to be at soma surface in the direction of the dendrite
+        dendrite_direction = np.array(
+            [np.sin(tilt_angle) * np.cos(azimuth_angle), np.sin(tilt_angle) * np.sin(azimuth_angle), np.cos(tilt_angle)]
+        )
+        target_bottom = dendrite_direction * soma_radius  # Point on soma surface
+        translation_vector = target_bottom - rotated_bottom[:3]
+        translation = trimesh.transformations.translation_matrix(translation_vector)
+        dendrite.apply_transform(translation)
+
+        dendrites.append(dendrite)
+
+    # Combine using boolean union operations for clean exterior surface
+    all_components = [soma, axon] + dendrites
+    try:
+        # Try boolean union for clean exterior surface
+        neuron = soma
+        neuron = neuron.union(axon)
+        for dendrite in dendrites:
+            neuron = neuron.union(dendrite)
+    except Exception as e:
+        # If union fails, fall back to concatenation
+        warnings.warn(f"Union operation failed: {e}, using concatenation")
+        neuron = trimesh.util.concatenate(all_components)
+
+    # Light cleanup to remove any duplicate faces from concatenation fallback
+    neuron = _clean_exterior_mesh(neuron)
+
+    # Add metadata
+    neuron.metadata["morphology_type"] = "neuron"
+    neuron.metadata["soma_radius"] = soma_radius
+    neuron.metadata["dendrite_length"] = dendrite_length
+    neuron.metadata["dendrite_radius"] = dendrite_radius
+    neuron.metadata["axon_length"] = axon_length
+    neuron.metadata["axon_radius"] = axon_radius
+    neuron.metadata["num_dendrites"] = num_dendrites
+    neuron.metadata["dendrite_angle"] = dendrite_angle
+
+    return neuron
+
+
+if __name__ == "__main__":
+    # Generate and save demo meshes when run as script
+    paths = save_demo_meshes()
+    print(f"Demo meshes created:")
+    for name, path in paths.items():
+        print(f"  {name}: {path}")
