@@ -32,6 +32,7 @@ from .demos import (
 # Core modules and functionality
 from .slicer import ZAxisSlicer
 from .regions import RegionDetector
+from .segmentation import MeshSegmenter, Segment
 from .graph import GraphBuilder
 from .ode import ODESystem
 from .simulation import Simulator
@@ -56,6 +57,8 @@ __all__ = [
     # Core modules
     "ZAxisSlicer",
     "RegionDetector",
+    "MeshSegmenter",
+    "Segment",
     "GraphBuilder",
     "ODESystem",
     "Simulator",
