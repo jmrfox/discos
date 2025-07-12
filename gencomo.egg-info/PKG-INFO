@@ -41,6 +41,8 @@ Requires-Dist: ipykernel>=6.29.5
 Requires-Dist: jupyter>=1.1.1
 Requires-Dist: pytest>=8.3.5
 Requires-Dist: voxelmap>=2.1.4
+Requires-Dist: pymesh>=1.0.2
+Requires-Dist: manifold3d>=3.1.1
 Provides-Extra: dev
 Requires-Dist: pytest>=6.0; extra == "dev"
 Requires-Dist: pytest-cov; extra == "dev"

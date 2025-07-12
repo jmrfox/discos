@@ -16,11 +16,14 @@ from .mesh import (
     MeshProcessor,
     visualize_mesh_3d,
     analyze_mesh_properties,
+    visualize_mesh_slice_interactive,
+    visualize_mesh_slice_grid,
 )
 
 # Demo mesh functions from demos module
 from .demos import (
     create_cylinder_mesh,
+    create_torus_mesh,
     create_branching_mesh,
     create_demo_neuron_mesh,
     save_demo_meshes,
@@ -42,8 +45,11 @@ __all__ = [
     "MeshProcessor",
     "visualize_mesh_3d",
     "analyze_mesh_properties",
+    "visualize_mesh_slice_interactive",
+    "visualize_mesh_slice_grid",
     # Demo mesh functions
     "create_cylinder_mesh",
+    "create_torus_mesh",
     "create_branching_mesh",
     "create_demo_neuron_mesh",
     "save_demo_meshes",

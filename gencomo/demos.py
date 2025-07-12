@@ -62,6 +62,55 @@ def create_cylinder_mesh(
     return cylinder
 
 
+def create_torus_mesh(
+    major_radius: float = 20.0,
+    minor_radius: float = 5.0,
+    major_segments: int = 20,
+    minor_segments: int = 12,
+    center: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> trimesh.Trimesh:
+    """
+    Create a torus mesh representing a ring-shaped neuronal structure.
+
+    Args:
+        major_radius: Radius from center of torus to center of tube (μm)
+        minor_radius: Radius of the tube itself (μm)
+        major_segments: Number of segments around the major radius
+        minor_segments: Number of segments around the minor radius (tube)
+        center: Center position (x, y, z) in μm
+
+    Returns:
+        Trimesh torus object
+    """
+    # Create torus using trimesh
+    torus = trimesh.creation.torus(
+        major_radius=major_radius,
+        minor_radius=minor_radius,
+        major_segments=major_segments,
+        minor_segments=minor_segments,
+    )
+
+    # Translate to center position if needed
+    if center != (0.0, 0.0, 0.0):
+        translation = trimesh.transformations.translation_matrix(center)
+        torus.apply_transform(translation)
+
+    # Add metadata
+    torus.metadata["morphology_type"] = "torus"
+    torus.metadata["major_radius"] = major_radius
+    torus.metadata["minor_radius"] = minor_radius
+    torus.metadata["center"] = center
+
+    # Calculate theoretical properties
+    volume_theoretical = 2 * np.pi**2 * major_radius * minor_radius**2
+    surface_area_theoretical = 4 * np.pi**2 * major_radius * minor_radius
+
+    torus.metadata["volume_theoretical"] = volume_theoretical
+    torus.metadata["surface_area_theoretical"] = surface_area_theoretical
+
+    return torus
+
+
 def _clean_exterior_mesh(combined_mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """
     Clean up a mesh to remove interior artifacts while preserving geometry.
@@ -153,13 +202,11 @@ def create_branching_mesh(
     # Combine using boolean union operations for clean exterior surface
     all_meshes = [trunk] + branches
     try:
-        # Try boolean union for clean exterior surface
-        combined = trunk
-        for branch in branches:
-            combined = combined.union(branch)
+        # Use boolean union to combine all overlapping shapes cleanly
+        combined = trimesh.boolean.union(all_meshes)
     except Exception as e:
         # If union fails, fall back to concatenation
-        warnings.warn(f"Union operation failed: {e}, using concatenation")
+        warnings.warn(f"Boolean union failed: {e}, using concatenation")
         combined = trimesh.util.concatenate(all_meshes)
 
     # Light cleanup to remove any duplicate faces from concatenation fallback
@@ -197,7 +244,7 @@ def create_branching_mesh(
     return combined
 
 
-def save_demo_meshes(output_dir: str = "demo_meshes") -> Dict[str, str]:
+def save_demo_meshes(output_dir: str = "data/mesh") -> Dict[str, str]:
     """
     Generate and save example meshes to files.
 
@@ -219,6 +266,12 @@ def save_demo_meshes(output_dir: str = "demo_meshes") -> Dict[str, str]:
     cylinder_path = os.path.join(output_dir, "cylinder.stl")
     cylinder.export(cylinder_path)
 
+    # Create torus mesh
+    print("  Creating torus mesh...")
+    torus = create_torus_mesh(major_radius=20.0, minor_radius=5.0)
+    torus_path = os.path.join(output_dir, "torus.stl")
+    torus.export(torus_path)
+
     # Create Y-branching mesh
     print("  Creating Y-branching mesh...")
     y_branch = create_branching_mesh(
@@ -237,7 +290,12 @@ def save_demo_meshes(output_dir: str = "demo_meshes") -> Dict[str, str]:
 
     print(f"✅ Demo meshes saved to {output_dir}/")
 
-    return {"cylinder": cylinder_path, "y_branch": y_branch_path, "multi_branch": multi_branch_path}
+    return {
+        "cylinder": cylinder_path,
+        "torus": torus_path,
+        "y_branch": y_branch_path,
+        "multi_branch": multi_branch_path,
+    }
 
 
 def create_demo_neuron_mesh(
@@ -299,7 +357,9 @@ def create_demo_neuron_mesh(
         dendrite_direction = np.array(
             [np.sin(tilt_angle) * np.cos(azimuth_angle), np.sin(tilt_angle) * np.sin(azimuth_angle), np.cos(tilt_angle)]
         )
-        target_bottom = dendrite_direction * soma_radius  # Point on soma surface
+        target_bottom = (
+            dendrite_direction * soma_radius * 0.8
+        )  # Point on soma surface. included a factor to ensure proper overlap
         translation_vector = target_bottom - rotated_bottom[:3]
         translation = trimesh.transformations.translation_matrix(translation_vector)
         dendrite.apply_transform(translation)
@@ -309,14 +369,11 @@ def create_demo_neuron_mesh(
     # Combine using boolean union operations for clean exterior surface
     all_components = [soma, axon] + dendrites
     try:
-        # Try boolean union for clean exterior surface
-        neuron = soma
-        neuron = neuron.union(axon)
-        for dendrite in dendrites:
-            neuron = neuron.union(dendrite)
+        # Use boolean union to combine all overlapping shapes cleanly
+        neuron = trimesh.boolean.union(all_components)
     except Exception as e:
         # If union fails, fall back to concatenation
-        warnings.warn(f"Union operation failed: {e}, using concatenation")
+        warnings.warn(f"Boolean union failed: {e}, using concatenation")
         neuron = trimesh.util.concatenate(all_components)
 
     # Light cleanup to remove any duplicate faces from concatenation fallback

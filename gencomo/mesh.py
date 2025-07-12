@@ -1,9 +1,5 @@
 """
-Meimport numpy as np
-import trimesh
-import open3d as o3d
-from typing import Optional, Tuple, Dict, Any, List, Union
-import warningsocessing utilities for GenCoMo.
+Mesh processing utilities for GenCoMo.
 
 Handles loading, processing, and analyzing neuronal meshes from various formats.
 """
@@ -377,7 +373,16 @@ def _visualize_plotly(mesh: trimesh.Trimesh, title: str, color: str):
         )
 
         fig.update_layout(
-            title=title, scene=dict(xaxis_title="X (µm)", yaxis_title="Y (µm)", zaxis_title="Z (µm)", aspectmode="data")
+            title=title,
+            scene=dict(
+                xaxis_title="X (µm)",
+                yaxis_title="Y (µm)",
+                zaxis_title="Z (µm)",
+                aspectmode="data",  # Use data aspect ratio to preserve real geometry
+                camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),  # Better default viewing angle
+            ),
+            width=800,
+            height=600,
         )
 
         return fig
@@ -435,3 +440,307 @@ def analyze_mesh_properties(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, 
     }
 
     return properties
+
+
+def visualize_mesh_slice_interactive(
+    mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]] = None,
+    vertices: Optional[np.ndarray] = None,
+    faces: Optional[np.ndarray] = None,
+    title: str = "Interactive Mesh Slice",
+    z_range: Optional[Tuple[float, float]] = None,
+    num_slices: int = 50,
+    slice_color: str = "red",
+    mesh_color: str = "lightblue",
+    mesh_opacity: float = 0.3,
+) -> Optional[object]:
+    """
+    Create an interactive visualization showing cross-sections of a 3D mesh.
+
+    Users can use a slider to explore different Z-slice levels and see how
+    the geometry changes along the Z-axis.
+
+    Args:
+        mesh_data: Either a Trimesh object or (vertices, faces) tuple
+        vertices: Vertex array (alternative to mesh_data)
+        faces: Face array (alternative to mesh_data)
+        title: Plot title
+        z_range: Tuple of (min_z, max_z) for slice range. Auto-detected if None.
+        num_slices: Number of slice levels to create
+        slice_color: Color for the slice lines
+        mesh_color: Color for the background mesh
+        mesh_opacity: Opacity of the background mesh (0-1)
+
+    Returns:
+        Interactive Plotly figure with slider
+    """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        print("Plotly not available for interactive slice visualization")
+        return None
+
+    # Handle different input formats
+    if mesh_data is not None:
+        if isinstance(mesh_data, tuple):
+            vertices, faces = mesh_data
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        else:
+            mesh = mesh_data
+    elif vertices is not None and faces is not None:
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        raise ValueError("Must provide either mesh_data or both vertices and faces")
+
+    # Determine Z range
+    if z_range is None:
+        z_min, z_max = mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()
+        # Add small padding
+        z_padding = (z_max - z_min) * 0.05
+        z_range = (z_min - z_padding, z_max + z_padding)
+    else:
+        z_min, z_max = z_range
+
+    # Create Z levels for slicing
+    z_levels = np.linspace(z_min, z_max, num_slices)
+
+    # Create base mesh trace
+    mesh_vertices = mesh.vertices
+    mesh_faces = mesh.faces
+
+    base_mesh = go.Mesh3d(
+        x=mesh_vertices[:, 0],
+        y=mesh_vertices[:, 1],
+        z=mesh_vertices[:, 2],
+        i=mesh_faces[:, 0],
+        j=mesh_faces[:, 1],
+        k=mesh_faces[:, 2],
+        color=mesh_color,
+        opacity=mesh_opacity,
+        name="Mesh",
+    )
+
+    # Create slice traces for each Z level
+    slice_traces = []
+    for i, z_level in enumerate(z_levels):
+        try:
+            # Get 2D cross-section at this Z level
+            slice_2d = mesh.section(plane_origin=[0, 0, z_level], plane_normal=[0, 0, 1])
+
+            if slice_2d is not None and hasattr(slice_2d, "entities") and len(slice_2d.entities) > 0:
+                # Convert slice to 3D coordinates - handle multiple disconnected regions
+                all_x_coords = []
+                all_y_coords = []
+                all_z_coords = []
+
+                for entity in slice_2d.entities:
+                    if hasattr(entity, "points"):
+                        points = slice_2d.vertices[entity.points]
+                        # Add Z coordinate
+                        points_3d = np.column_stack([points, np.full(len(points), z_level)])
+
+                        # Add points for this entity
+                        all_x_coords.extend(points_3d[:, 0])
+                        all_y_coords.extend(points_3d[:, 1])
+                        all_z_coords.extend(points_3d[:, 2])
+
+                        # Close the loop for this entity
+                        if len(points_3d) > 0:
+                            all_x_coords.append(points_3d[0, 0])
+                            all_y_coords.append(points_3d[0, 1])
+                            all_z_coords.append(points_3d[0, 2])
+
+                        # Add line break between entities (None values)
+                        all_x_coords.append(None)
+                        all_y_coords.append(None)
+                        all_z_coords.append(None)
+
+                if all_x_coords:
+                    slice_trace = go.Scatter3d(
+                        x=all_x_coords,
+                        y=all_y_coords,
+                        z=all_z_coords,
+                        mode="lines",
+                        line=dict(color=slice_color, width=4),
+                        name=f"Slice Z={z_level:.2f}",
+                        visible=(i == num_slices // 2),  # Start with middle slice visible
+                    )
+                    slice_traces.append(slice_trace)
+                else:
+                    # Empty slice
+                    slice_trace = go.Scatter3d(
+                        x=[],
+                        y=[],
+                        z=[],
+                        mode="lines",
+                        name=f"Slice Z={z_level:.2f}",
+                        visible=(i == num_slices // 2),
+                    )
+                    slice_traces.append(slice_trace)
+            else:
+                # No intersection at this level
+                slice_trace = go.Scatter3d(
+                    x=[],
+                    y=[],
+                    z=[],
+                    mode="lines",
+                    name=f"Slice Z={z_level:.2f}",
+                    visible=(i == num_slices // 2),
+                )
+                slice_traces.append(slice_trace)
+
+        except Exception as e:
+            # If slicing fails, create empty trace
+            slice_trace = go.Scatter3d(
+                x=[],
+                y=[],
+                z=[],
+                mode="lines",
+                name=f"Slice Z={z_level:.2f}",
+                visible=(i == num_slices // 2),
+            )
+            slice_traces.append(slice_trace)
+
+    # Create figure with all traces
+    fig = go.Figure(data=[base_mesh] + slice_traces)
+
+    # Create slider steps
+    steps = []
+    for i, z_level in enumerate(z_levels):
+        step = dict(
+            method="update",
+            args=[{"visible": [True] + [j == i for j in range(len(slice_traces))]}],
+            label=f"{z_level:.2f}",
+        )
+        steps.append(step)
+
+    # Add slider
+    sliders = [dict(active=num_slices // 2, currentvalue={"prefix": "Z-slice: "}, pad={"t": 50}, steps=steps)]
+
+    fig.update_layout(
+        title=f"{title}<br><sub>Use slider to explore different Z-levels</sub>",
+        scene=dict(
+            xaxis_title="X (µm)",
+            yaxis_title="Y (µm)",
+            zaxis_title="Z (µm)",
+            aspectmode="data",  # Use data aspect ratio to preserve real geometry
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),  # Better default viewing angle
+        ),
+        sliders=sliders,
+        width=800,
+        height=700,
+    )
+
+    return fig
+
+
+def visualize_mesh_slice_grid(
+    mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]] = None,
+    vertices: Optional[np.ndarray] = None,
+    faces: Optional[np.ndarray] = None,
+    title: str = "Mesh Slice Grid",
+    num_slices: int = 9,
+    z_range: Optional[Tuple[float, float]] = None,
+) -> Optional[object]:
+    """
+    Create a grid visualization showing multiple cross-sections of a 3D mesh.
+
+    Args:
+        mesh_data: Either a Trimesh object or (vertices, faces) tuple
+        vertices: Vertex array (alternative to mesh_data)
+        faces: Face array (alternative to mesh_data)
+        title: Plot title
+        num_slices: Number of slices to show (should be perfect square for grid)
+        z_range: Tuple of (min_z, max_z) for slice range. Auto-detected if None.
+
+    Returns:
+        Plotly figure with subplot grid
+    """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        import math
+    except ImportError:
+        print("Plotly not available for slice grid visualization")
+        return None
+
+    # Handle different input formats
+    if mesh_data is not None:
+        if isinstance(mesh_data, tuple):
+            vertices, faces = mesh_data
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        else:
+            mesh = mesh_data
+    elif vertices is not None and faces is not None:
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        raise ValueError("Must provide either mesh_data or both vertices and faces")
+
+    # Determine grid size
+    grid_size = int(math.sqrt(num_slices))
+    if grid_size * grid_size != num_slices:
+        grid_size = int(math.ceil(math.sqrt(num_slices)))
+        num_slices = grid_size * grid_size
+
+    # Determine Z range
+    if z_range is None:
+        z_min, z_max = mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()
+    else:
+        z_min, z_max = z_range
+
+    # Create Z levels
+    z_levels = np.linspace(z_min, z_max, num_slices)
+
+    # Create subplots
+    fig = make_subplots(
+        rows=grid_size,
+        cols=grid_size,
+        subplot_titles=[f"Z = {z:.2f}" for z in z_levels],
+        specs=[[{"type": "xy"}] * grid_size for _ in range(grid_size)],
+    )
+
+    # Generate slices and add to subplots
+    for i, z_level in enumerate(z_levels):
+        row = i // grid_size + 1
+        col = i % grid_size + 1
+
+        try:
+            # Get 2D cross-section
+            slice_2d = mesh.section(plane_origin=[0, 0, z_level], plane_normal=[0, 0, 1])
+
+            if slice_2d is not None and hasattr(slice_2d, "entities") and len(slice_2d.entities) > 0:
+                # Plot each entity in the slice
+                for entity in slice_2d.entities:
+                    if hasattr(entity, "points"):
+                        points = slice_2d.vertices[entity.points]
+                        # Close the loop
+                        points_closed = np.vstack([points, points[0]])
+
+                        fig.add_trace(
+                            go.Scatter(
+                                x=points_closed[:, 0],
+                                y=points_closed[:, 1],
+                                mode="lines",
+                                line=dict(color="red", width=2),
+                                showlegend=False,
+                            ),
+                            row=row,
+                            col=col,
+                        )
+
+            # Set equal aspect ratio for each subplot
+            fig.update_xaxes(scaleanchor="y", scaleratio=1, row=row, col=col)
+            fig.update_xaxes(title_text="X (µm)", row=row, col=col)
+            fig.update_yaxes(title_text="Y (µm)", row=row, col=col)
+
+        except Exception as e:
+            # If slicing fails, just leave subplot empty
+            pass
+
+    fig.update_layout(
+        title=title,
+        height=150 * grid_size,
+        showlegend=False,
+    )
+
+    return fig
