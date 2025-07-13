@@ -449,6 +449,7 @@ def _visualize_trimesh(mesh: trimesh.Trimesh, title: str, color: str = "lightblu
 def analyze_mesh(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]]) -> dict:
     """
     Analyze and return mesh properties for diagnostic purposes.
+    This function performs pure analysis without modifying the input mesh.
 
     Args:
         mesh_data: Either a Trimesh object or (vertices, faces) tuple
@@ -461,19 +462,10 @@ def analyze_mesh(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]
         vertices, faces = mesh_data
         mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     else:
-        mesh = mesh_data
+        # Work with a copy to avoid side effects
+        mesh = mesh_data.copy()
 
-    # Fix mesh if needed for volume calculation
-    try:
-        # Try to make the mesh watertight if it isn't
-        if not mesh.is_watertight:
-            # Fill small holes and fix normals
-            mesh.fill_holes()
-            mesh.fix_normals()
-    except:
-        pass  # If fixing fails, continue with original mesh
-
-    # Calculate volume more robustly
+    # Calculate volume robustly without modifying the mesh
     volume = None
     try:
         if mesh.is_volume and mesh.is_watertight:
@@ -853,3 +845,99 @@ def visualize_mesh_slice_grid(
     )
 
     return fig
+
+
+def repair_mesh(
+    mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]],
+    fix_holes: bool = True,
+    remove_duplicates: bool = True,
+    fix_normals: bool = True,
+    remove_degenerate: bool = True,
+) -> trimesh.Trimesh:
+    """
+    Attempt to repair common mesh issues to improve watertightness and quality.
+
+    Args:
+        mesh_data: Either a Trimesh object or (vertices, faces) tuple
+        fix_holes: Whether to attempt filling holes
+        remove_duplicates: Whether to remove duplicate faces and vertices
+        fix_normals: Whether to fix face normal consistency
+        remove_degenerate: Whether to remove degenerate faces
+
+    Returns:
+        Repaired mesh (new copy, original is not modified)
+    """
+    # Convert to mesh object if needed and create a copy
+    if isinstance(mesh_data, tuple):
+        vertices, faces = mesh_data
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+    else:
+        mesh = mesh_data.copy()  # Work on a copy
+
+    repair_log = []
+
+    # Remove duplicate and degenerate faces
+    if remove_duplicates:
+        try:
+            initial_faces = len(mesh.faces)
+            mesh.remove_duplicate_faces()
+            removed_faces = initial_faces - len(mesh.faces)
+            if removed_faces > 0:
+                repair_log.append(f"Removed {removed_faces} duplicate faces")
+        except Exception as e:
+            repair_log.append(f"Failed to remove duplicate faces: {e}")
+
+    if remove_degenerate:
+        try:
+            initial_faces = len(mesh.faces)
+            mesh.remove_degenerate_faces()
+            removed_faces = initial_faces - len(mesh.faces)
+            if removed_faces > 0:
+                repair_log.append(f"Removed {removed_faces} degenerate faces")
+        except Exception as e:
+            repair_log.append(f"Failed to remove degenerate faces: {e}")
+
+    # Fix winding consistency
+    if fix_normals:
+        try:
+            if not mesh.is_winding_consistent:
+                mesh.fix_normals()
+                if mesh.is_winding_consistent:
+                    repair_log.append("Fixed face normal winding consistency")
+                else:
+                    repair_log.append("Attempted to fix normals but still inconsistent")
+        except Exception as e:
+            repair_log.append(f"Failed to fix normals: {e}")
+
+    # Attempt to fill holes
+    if fix_holes:
+        try:
+            if not mesh.is_watertight:
+                initial_watertight = mesh.is_watertight
+                mesh.fill_holes()
+                if mesh.is_watertight and not initial_watertight:
+                    repair_log.append("Successfully filled holes - mesh is now watertight")
+                elif mesh.is_watertight:
+                    repair_log.append("Mesh was already watertight")
+                else:
+                    repair_log.append("Attempted to fill holes but mesh still not watertight")
+        except Exception as e:
+            repair_log.append(f"Failed to fill holes: {e}")
+
+    # Store repair log as mesh metadata
+    if not hasattr(mesh, "metadata"):
+        mesh.metadata = {}
+    mesh.metadata["repair_log"] = repair_log
+
+    # Print repair summary
+    if repair_log:
+        print("🔧 Mesh Repair Summary:")
+        for log_entry in repair_log:
+            print(f"  • {log_entry}")
+    else:
+        print("🔧 No repairs needed - mesh is in good condition")
+
+    return mesh
+
+
+# ...existing code...

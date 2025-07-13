@@ -300,7 +300,7 @@ class MeshSegmenter:
         return external_area, internal_area
 
     def _build_connectivity_graph(self):
-        """Step 3: Build connectivity graph based on shared internal faces."""
+        """Step 3: Build connectivity graph based on shared cross-section boundaries."""
         self.connectivity_graph = nx.Graph()
 
         # Add all segments as nodes
@@ -309,20 +309,88 @@ class MeshSegmenter:
 
         connections_found = 0
 
-        # Find connections between segments in adjacent slices
-        for i in range(len(self.slices) - 1):
-            current_slice_segments = [s for s in self.segments if s.slice_index == i]
-            next_slice_segments = [s for s in self.segments if s.slice_index == i + 1]
+        # For each cross-section, connect segments that share boundary faces
+        for cross_section_idx in range(len(self.cross_sections)):
+            z_position = self.cross_sections[cross_section_idx].z_position
 
-            # Check all pairs for shared internal faces
-            for seg1 in current_slice_segments:
-                for seg2 in next_slice_segments:
-                    if self._segments_share_internal_face(seg1, seg2):
-                        self.connectivity_graph.add_edge(seg1.id, seg2.id)
+            # Find all segments that have faces at this cross-section
+            segments_at_cut = []
+            for segment in self.segments:
+                if self._segment_has_faces_at_z(segment, z_position):
+                    segments_at_cut.append(segment)
+
+            # Connect segments that share the same cross-sectional boundary
+            if len(segments_at_cut) > 1:
+                connections = self._find_shared_boundary_connections(segments_at_cut, z_position)
+                for seg1_id, seg2_id in connections:
+                    if not self.connectivity_graph.has_edge(seg1_id, seg2_id):
+                        self.connectivity_graph.add_edge(seg1_id, seg2_id)
                         connections_found += 1
-                        print(f"  Connected {seg1.id} ↔ {seg2.id}")
+                        print(f"  Connected {seg1_id} ↔ {seg2_id}")
 
         print(f"✅ Built connectivity graph: {len(self.connectivity_graph.nodes)} nodes, " f"{connections_found} edges")
+
+    def _segment_has_faces_at_z(self, segment: Segment, z_position: float) -> bool:
+        """Check if a segment has faces at the given z-position."""
+        z_tolerance = self.slice_height * 0.01 if self.slice_height else 0.01
+
+        # Check if any face centers are at the z-position
+        face_centers = segment.mesh.triangles_center
+        for center in face_centers:
+            if abs(center[2] - z_position) < z_tolerance:
+                return True
+        return False
+
+    def _find_shared_boundary_connections(self, segments: List[Segment], z_position: float) -> List[Tuple[str, str]]:
+        """Find connections between segments that share boundary faces at z_position."""
+        connections = []
+        z_tolerance = self.slice_height * 0.01 if self.slice_height else 0.01
+
+        # Get boundary faces for each segment at this z-position
+        segment_boundary_faces = {}
+        for segment in segments:
+            boundary_faces = []
+            face_centers = segment.mesh.triangles_center
+            triangles = segment.mesh.triangles
+
+            for i, center in enumerate(face_centers):
+                if abs(center[2] - z_position) < z_tolerance:
+                    boundary_faces.append(triangles[i])
+
+            if boundary_faces:
+                segment_boundary_faces[segment.id] = boundary_faces
+
+        # Check for overlapping boundary faces between segment pairs
+        segment_ids = list(segment_boundary_faces.keys())
+        for i in range(len(segment_ids)):
+            for j in range(i + 1, len(segment_ids)):
+                seg1_id = segment_ids[i]
+                seg2_id = segment_ids[j]
+
+                if self._boundary_faces_overlap(segment_boundary_faces[seg1_id], segment_boundary_faces[seg2_id]):
+                    connections.append((seg1_id, seg2_id))
+
+        return connections
+
+    def _boundary_faces_overlap(self, faces1: List[np.ndarray], faces2: List[np.ndarray]) -> bool:
+        """Check if boundary faces from two segments overlap significantly."""
+        if not faces1 or not faces2:
+            return False
+
+        # Use triangle centroids and check for proximity in XY plane
+        tolerance = 0.5  # Spatial tolerance for overlap detection
+
+        for face1 in faces1:
+            centroid1 = np.mean(face1[:, :2], axis=0)  # XY only
+
+            for face2 in faces2:
+                centroid2 = np.mean(face2[:, :2], axis=0)  # XY only
+
+                distance = np.linalg.norm(centroid1 - centroid2)
+                if distance < tolerance:
+                    return True
+
+        return False
 
     def _segments_share_internal_face(self, seg1: Segment, seg2: Segment) -> bool:
         """Check if two segments share an internal face."""
@@ -499,21 +567,62 @@ class MeshSegmenter:
         if not hasattr(source_mesh, "face_attributes") or "face_type" not in source_mesh.face_attributes:
             return
 
-        # For a single connected component (typical case), the component should have
-        # the same faces as the source mesh, just potentially reordered
+        source_face_types = source_mesh.face_attributes["face_type"]
+
         if len(components) == 1:
+            # Single component case - direct transfer
             component = components[0]
             if not hasattr(component, "face_attributes"):
                 component.face_attributes = {}
 
-            # If face counts match, directly copy the attributes
             if len(component.faces) == len(source_mesh.faces):
-                component.face_attributes["face_type"] = source_mesh.face_attributes["face_type"].copy()
+                component.face_attributes["face_type"] = source_face_types.copy()
                 print(f"    🔄 Transferred face attributes: {len(component.faces)} faces")
             else:
                 print(f"    ⚠️ Face count mismatch: source={len(source_mesh.faces)}, component={len(component.faces)}")
         else:
-            print(f"    ⚠️ Multiple components ({len(components)}), face transfer not implemented")
+            # Multiple components case - map faces based on geometric matching
+            print(f"    🔄 Transferring face attributes to {len(components)} components...")
+
+            for comp_idx, component in enumerate(components):
+                if not hasattr(component, "face_attributes"):
+                    component.face_attributes = {}
+
+                # Map component faces to source faces by geometric similarity
+                comp_face_types = self._map_faces_to_source(component, source_mesh, source_face_types)
+                component.face_attributes["face_type"] = comp_face_types
+
+                external_count = np.sum(comp_face_types == "external")
+                internal_count = np.sum(comp_face_types == "internal")
+                print(f"      Component {comp_idx}: {external_count} external + {internal_count} internal faces")
+
+    def _map_faces_to_source(
+        self, component: trimesh.Trimesh, source_mesh: trimesh.Trimesh, source_face_types: np.ndarray
+    ) -> np.ndarray:
+        """Map component faces to source mesh faces based on geometric proximity."""
+        comp_centroids = component.triangles_center
+        source_centroids = source_mesh.triangles_center
+
+        face_types = np.array(["external"] * len(comp_centroids), dtype=object)
+
+        # For each component face, find the closest source face
+        for i, comp_centroid in enumerate(comp_centroids):
+            distances = np.linalg.norm(source_centroids - comp_centroid, axis=1)
+            closest_idx = np.argmin(distances)
+
+            # If the closest source face is very close, use its type
+            if distances[closest_idx] < 0.1:  # Tolerance for geometric matching
+                face_types[i] = source_face_types[closest_idx]
+            else:
+                # If no close match, classify based on geometry
+                # Faces at slice boundaries (z_min/z_max) are likely internal
+                z_coord = comp_centroid[2]
+                if abs(z_coord - source_mesh.bounds[0, 2]) < 0.01 or abs(z_coord - source_mesh.bounds[1, 2]) < 0.01:
+                    face_types[i] = "internal"
+                else:
+                    face_types[i] = "external"
+
+        return face_types
 
     def visualize_connectivity_graph(
         self, save_path: str = None, show_plot: bool = True, include_3d_view: bool = False, figsize: tuple = None
@@ -580,8 +689,10 @@ class MeshSegmenter:
                 pos[segment.id] = (x_positions[i], y_pos)
                 # Color by z-level
                 colors.append(cmap(z_level / max_z if max_z > 0 else 0))
-                # Size by volume
-                node_sizes.append(max(100, min(1000, segment.volume * 1000)))
+                # Smaller, more reasonable node sizes based on volume
+                base_size = 50  # Smaller base size
+                volume_factor = min(3.0, max(0.5, segment.volume / 100))  # Scale factor
+                node_sizes.append(int(base_size * volume_factor))
 
         # Helper function to apply aspect ratio constraints
         def apply_aspect_ratio_fix(ax, positions, min_aspect_ratio=0.5):
@@ -610,13 +721,28 @@ class MeshSegmenter:
             # Left plot: 3D-like representation showing z-levels
             ax1.set_title("Connectivity Graph (3D View)", fontsize=14, fontweight="bold")
 
-            # Draw the graph
-            nx.draw_networkx_nodes(
-                self.connectivity_graph, pos, ax=ax1, node_color=colors, node_size=node_sizes, alpha=0.8
+            # Draw the graph with improved styling
+            # Draw edges first so they appear behind nodes
+            nx.draw_networkx_edges(
+                self.connectivity_graph, pos, ax=ax1, edge_color="darkblue", width=2.5, alpha=0.7, style="-"
             )
-            nx.draw_networkx_edges(self.connectivity_graph, pos, ax=ax1, edge_color="gray", width=2, alpha=0.6)
 
-            nx.draw_networkx_labels(self.connectivity_graph, pos, ax=ax1, font_size=8, font_weight="bold")
+            # Draw nodes with smaller size and better visibility
+            nx.draw_networkx_nodes(
+                self.connectivity_graph,
+                pos,
+                ax=ax1,
+                node_color=colors,
+                node_size=node_sizes,
+                alpha=0.9,
+                edgecolors="black",
+                linewidths=1.0,
+            )
+
+            # Draw labels with better contrast
+            nx.draw_networkx_labels(
+                self.connectivity_graph, pos, ax=ax1, font_size=7, font_weight="bold", font_color="white"
+            )
 
             ax1.set_xlabel("Horizontal Position", fontsize=12)
             ax1.set_ylabel("Z-Level (Slice Index)", fontsize=12)
