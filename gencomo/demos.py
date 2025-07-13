@@ -68,6 +68,7 @@ def create_torus_mesh(
     major_segments: int = 20,
     minor_segments: int = 12,
     center: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    axis: str = "x",
 ) -> trimesh.Trimesh:
     """
     Create a torus mesh representing a ring-shaped neuronal structure.
@@ -78,17 +79,29 @@ def create_torus_mesh(
         major_segments: Number of segments around the major radius
         minor_segments: Number of segments around the minor radius (tube)
         center: Center position (x, y, z) in μm
+        axis: Axis of symmetry ('x', 'y', or 'z') - torus rotates around this axis
 
     Returns:
         Trimesh torus object
     """
-    # Create torus using trimesh
+    # Create torus using trimesh (default: axis of symmetry along z)
     torus = trimesh.creation.torus(
         major_radius=major_radius,
         minor_radius=minor_radius,
         major_segments=major_segments,
         minor_segments=minor_segments,
     )
+
+    # Rotate to desired axis of symmetry if needed
+    if axis.lower() == "x":
+        # Rotate 90 degrees around y-axis to make x the axis of symmetry
+        rotation = trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0])
+        torus.apply_transform(rotation)
+    elif axis.lower() == "y":
+        # Rotate 90 degrees around x-axis to make y the axis of symmetry
+        rotation = trimesh.transformations.rotation_matrix(np.pi / 2, [1, 0, 0])
+        torus.apply_transform(rotation)
+    # z-axis is default, no rotation needed
 
     # Translate to center position if needed
     if center != (0.0, 0.0, 0.0):
@@ -100,6 +113,7 @@ def create_torus_mesh(
     torus.metadata["major_radius"] = major_radius
     torus.metadata["minor_radius"] = minor_radius
     torus.metadata["center"] = center
+    torus.metadata["axis"] = axis
 
     # Calculate theoretical properties
     volume_theoretical = 2 * np.pi**2 * major_radius * minor_radius**2

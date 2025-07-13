@@ -30,10 +30,9 @@ from .demos import (
 )
 
 # Core modules and functionality
-from .slicer import ZAxisSlicer
-from .regions import RegionDetector
+# Note: slicer, regions, and graph modules moved to dev_storage/old_modules
+# The current approach uses MeshSegmenter for 3D mesh segmentation
 from .segmentation import MeshSegmenter, Segment
-from .graph import GraphBuilder
 from .ode import ODESystem
 from .simulation import Simulator
 
@@ -55,11 +54,9 @@ __all__ = [
     "create_demo_neuron_mesh",
     "save_demo_meshes",
     # Core modules
-    "ZAxisSlicer",
-    "RegionDetector",
+    # Note: ZAxisSlicer, RegionDetector, GraphBuilder moved to dev_storage/old_modules
     "MeshSegmenter",
     "Segment",
-    "GraphBuilder",
     "ODESystem",
     "Simulator",
 ]

@@ -46,8 +46,9 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": [
-            "gencomo=gencomo.cli:main",
-        ],
+        # Note: CLI disabled since it depends on modules moved to dev_storage
+        # "console_scripts": [
+        #     "gencomo=gencomo.cli:main",
+        # ],
     },
 )
