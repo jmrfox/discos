@@ -151,139 +151,218 @@ class MeshSegmenter:
 
     def _extract_slice_mesh(self, mesh: trimesh.Trimesh, z_min: float, z_max: float) -> Optional[trimesh.Trimesh]:
         """
-        Extract mesh portion between z_min and z_max using plane cutting.
+        Extract mesh portion between z_min and z_max using proper plane-edge intersection.
 
-        This properly cuts the mesh at the z boundaries using manual vertex clamping
-        for reliable results.
+        This creates new vertices where slice planes intersect mesh edges, and properly
+        tracks which faces are original (exterior) vs newly created (interior).
         """
         try:
-            # Start with a copy of the original mesh
-            vertices = mesh.vertices.copy()
-            faces = mesh.faces.copy()
+            # Use a different approach: cut from both ends toward the middle
+            # This ensures we always have geometry to cut
 
-            # Clamp vertices to the z-range [z_min, z_max]
-            # This effectively "cuts" the mesh at both boundaries
-            vertices[:, 2] = np.clip(vertices[:, 2], z_min, z_max)
+            # Method 1: Try consecutive cuts (original approach)
+            try:
+                # Cut at upper boundary first (keep everything below z_max)
+                upper_normal = np.array([0, 0, 1])  # Points up - keeps everything below
+                upper_origin = np.array([0, 0, z_max])
 
-            # Create the sliced mesh
-            sliced_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+                upper_cut_mesh = mesh.slice_plane(upper_origin, upper_normal)
+                if upper_cut_mesh is None or upper_cut_mesh.is_empty:
+                    raise ValueError("Upper cut failed")
 
-            # Now we need to remove faces that span too large a z-range
-            # This removes faces that were "flattened" by the clipping
-            face_vertices = vertices[faces]
-            face_z_coords = face_vertices[:, :, 2]
-            face_z_spans = face_z_coords.max(axis=1) - face_z_coords.min(axis=1)
+                # Cut at lower boundary (keep everything above z_min)
+                lower_normal = np.array([0, 0, -1])  # Points down - keeps everything above
+                lower_origin = np.array([0, 0, z_min])
 
-            # Remove faces that span more than the slice width (these are artifacts)
-            slice_width = z_max - z_min
-            valid_face_mask = face_z_spans <= slice_width * 1.1  # Allow 10% tolerance
+                sliced_mesh = upper_cut_mesh.slice_plane(lower_origin, lower_normal)
+                if sliced_mesh is None or sliced_mesh.is_empty:
+                    raise ValueError("Lower cut failed")
 
-            if not valid_face_mask.any():
-                return None
+            except (ValueError, AttributeError):
+                # Method 2: Try reverse order
+                try:
+                    # Cut at lower boundary first
+                    lower_normal = np.array([0, 0, -1])
+                    lower_origin = np.array([0, 0, z_min])
 
-            valid_faces = faces[valid_face_mask]
+                    lower_cut_mesh = mesh.slice_plane(lower_origin, lower_normal)
+                    if lower_cut_mesh is None or lower_cut_mesh.is_empty:
+                        raise ValueError("Lower cut failed")
 
-            # Get unique vertices used by valid faces
-            unique_verts = np.unique(valid_faces.flatten())
-            if len(unique_verts) < 3:
-                return None
+                    # Then cut at upper boundary
+                    upper_normal = np.array([0, 0, 1])
+                    upper_origin = np.array([0, 0, z_max])
 
-            # Create vertex mapping
-            old_to_new = {old: new for new, old in enumerate(unique_verts)}
+                    sliced_mesh = lower_cut_mesh.slice_plane(upper_origin, upper_normal)
+                    if sliced_mesh is None or sliced_mesh.is_empty:
+                        raise ValueError("Upper cut failed")
 
-            # Remap faces to new vertex indices
-            new_faces = []
-            for face in valid_faces:
-                new_face = [old_to_new[v] for v in face]
-                new_faces.append(new_face)
+                except (ValueError, AttributeError):
+                    # Method 3: Fallback to vertex clamping if slice_plane fails
+                    vertices = mesh.vertices.copy()
+                    faces = mesh.faces.copy()
 
-            final_vertices = vertices[unique_verts]
-            final_faces = np.array(new_faces)
+                    # Clamp vertices to the z-range
+                    vertices[:, 2] = np.clip(vertices[:, 2], z_min, z_max)
 
-            # Create the final segment mesh
-            segment_mesh = trimesh.Trimesh(vertices=final_vertices, faces=final_faces)
+                    # Create mesh and filter faces that span too much
+                    temp_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+                    face_vertices = vertices[faces]
+                    face_z_coords = face_vertices[:, :, 2]
+                    face_z_spans = face_z_coords.max(axis=1) - face_z_coords.min(axis=1)
+
+                    slice_width = z_max - z_min
+                    valid_face_mask = face_z_spans <= slice_width * 1.1
+
+                    if not valid_face_mask.any():
+                        return None
+
+                    valid_faces = faces[valid_face_mask]
+                    unique_verts = np.unique(valid_faces.flatten())
+
+                    if len(unique_verts) < 3:
+                        return None
+
+                    old_to_new = {old: new for new, old in enumerate(unique_verts)}
+                    new_faces = [[old_to_new[v] for v in face] for face in valid_faces]
+
+                    sliced_mesh = trimesh.Trimesh(vertices=vertices[unique_verts], faces=np.array(new_faces))
 
             # Validate the result
-            if segment_mesh is None or segment_mesh.is_empty:
+            if sliced_mesh is None or sliced_mesh.is_empty:
                 return None
 
-            if not hasattr(segment_mesh, "vertices") or len(segment_mesh.vertices) < 3:
+            if not hasattr(sliced_mesh, "vertices") or len(sliced_mesh.vertices) < 3:
                 return None
 
             # Check that we got a reasonable slice
-            vertex_z_range = segment_mesh.vertices[:, 2]
+            vertex_z_range = sliced_mesh.vertices[:, 2]
             actual_z_min, actual_z_max = vertex_z_range.min(), vertex_z_range.max()
 
-            # The slice should be within our specified bounds
-            if actual_z_min < z_min - 1e-6 or actual_z_max > z_max + 1e-6:
+            # Allow some tolerance for numerical precision
+            tolerance = 1e-6
+            if actual_z_min < z_min - tolerance or actual_z_max > z_max + tolerance:
                 warnings.warn(
                     f"Slice [{z_min:.3f}, {z_max:.3f}] has vertices outside range: [{actual_z_min:.3f}, {actual_z_max:.3f}]"
                 )
 
             # Clean up the mesh
             try:
-                segment_mesh.remove_degenerate_faces()
-                segment_mesh.remove_duplicate_faces()
+                sliced_mesh.remove_degenerate_faces()
+                sliced_mesh.remove_duplicate_faces()
             except:
                 pass
 
-            return segment_mesh
+            # Store metadata about which faces are cut faces (interior surfaces)
+            # This is approximated by finding faces that are near the z boundaries
+            self._mark_cut_faces(sliced_mesh, z_min, z_max)
+
+            return sliced_mesh
 
         except Exception as e:
             warnings.warn(f"Failed to extract slice [{z_min:.3f}, {z_max:.3f}]: {e}")
             return None
 
+    def _mark_cut_faces(self, mesh: trimesh.Trimesh, z_min: float, z_max: float):
+        """
+        Mark faces that are likely cut faces (interior surfaces) in the mesh metadata.
+
+        Cut faces are typically flat faces near the z boundaries with normal vectors
+        pointing along the z-axis.
+        """
+        try:
+            if not hasattr(mesh, "metadata"):
+                mesh.metadata = {}
+
+            # Get face centers and normals
+            face_centers = mesh.triangles_center
+            face_normals = mesh.face_normals
+
+            # Identify faces near the z boundaries
+            tolerance = 1e-3
+            at_z_min = np.abs(face_centers[:, 2] - z_min) < tolerance
+            at_z_max = np.abs(face_centers[:, 2] - z_max) < tolerance
+
+            # Also check if normals are roughly aligned with z-axis (flat cut faces)
+            normal_z_component = np.abs(face_normals[:, 2])
+            is_flat = normal_z_component > 0.9  # cos(~25°) threshold
+
+            # Cut faces are flat faces at the boundaries
+            cut_face_mask = (at_z_min | at_z_max) & is_flat
+            cut_face_indices = np.where(cut_face_mask)[0].tolist()
+
+            mesh.metadata["interior_face_indices"] = cut_face_indices
+            mesh.metadata["z_min"] = z_min
+            mesh.metadata["z_max"] = z_max
+
+        except Exception as e:
+            warnings.warn(f"Failed to mark cut faces: {e}")
+
     def _analyze_face_types(self, segment_mesh: trimesh.Trimesh, z_min: float, z_max: float) -> Tuple[float, float]:
         """
         Analyze faces to distinguish exterior vs interior (cut) faces.
 
-        Interior faces are cut faces created during slicing (flat faces at z boundaries).
+        Interior faces are cut faces created during slicing (marked in metadata).
         Exterior faces are original mesh surfaces (cylindrical sides, end caps).
 
         Returns:
             Tuple of (exterior_area, interior_area)
         """
         face_areas = segment_mesh.area_faces
-        vertices = segment_mesh.vertices
-        faces = segment_mesh.faces
 
         exterior_area = 0.0
         interior_area = 0.0
 
-        # Adaptive tolerance based on slice width
-        slice_width = z_max - z_min
-        tolerance = max(1e-3, slice_width * 0.1)  # 10% of slice width or minimum 1e-3
+        # Check if we have metadata about cut faces
+        if hasattr(segment_mesh, "metadata") and "interior_face_indices" in segment_mesh.metadata:
+            # Use the pre-computed interior face indices
+            interior_face_indices = set(segment_mesh.metadata["interior_face_indices"])
 
-        # Get original mesh bounds to distinguish end caps from cut faces
-        original_z_min, original_z_max = self.original_mesh.bounds[:, 2]
-
-        for face_idx, face in enumerate(faces):
-            face_verts = vertices[face]
-            face_z_coords = face_verts[:, 2]
-
-            # Check if face is on a cut plane
-            z_mean = np.mean(face_z_coords)
-            z_std = np.std(face_z_coords)
-
-            # If face is flat (low std) and at boundary, it could be a cut face or end cap
-            is_flat = z_std < tolerance
-            at_bottom_boundary = abs(z_mean - z_min) < tolerance
-            at_top_boundary = abs(z_mean - z_max) < tolerance
-
-            if is_flat and (at_bottom_boundary or at_top_boundary):
-                # Check if this is actually an original mesh end cap or a cut face
-                at_original_bottom = abs(z_mean - original_z_min) < tolerance
-                at_original_top = abs(z_mean - original_z_max) < tolerance
-
-                if at_original_bottom or at_original_top:
-                    # This is an original end cap - counts as exterior
-                    exterior_area += face_areas[face_idx]
-                else:
-                    # This is a cut face - counts as interior
+            for face_idx in range(len(face_areas)):
+                if face_idx in interior_face_indices:
                     interior_area += face_areas[face_idx]
-            else:
-                # Not flat or not at boundary - must be side surface (exterior)
-                exterior_area += face_areas[face_idx]
+                else:
+                    exterior_area += face_areas[face_idx]
+
+        else:
+            # Fallback to heuristic method if metadata not available
+            vertices = segment_mesh.vertices
+            faces = segment_mesh.faces
+
+            # Adaptive tolerance based on slice width
+            slice_width = z_max - z_min
+            tolerance = max(1e-3, slice_width * 0.1)  # 10% of slice width or minimum 1e-3
+
+            # Get original mesh bounds to distinguish end caps from cut faces
+            original_z_min, original_z_max = self.original_mesh.bounds[:, 2]
+
+            for face_idx, face in enumerate(faces):
+                face_verts = vertices[face]
+                face_z_coords = face_verts[:, 2]
+
+                # Check if face is on a cut plane
+                z_mean = np.mean(face_z_coords)
+                z_std = np.std(face_z_coords)
+
+                # If face is flat (low std) and at boundary, it could be a cut face or end cap
+                is_flat = z_std < tolerance
+                at_bottom_boundary = abs(z_mean - z_min) < tolerance
+                at_top_boundary = abs(z_mean - z_max) < tolerance
+
+                if is_flat and (at_bottom_boundary or at_top_boundary):
+                    # Check if this is actually an original mesh end cap or a cut face
+                    at_original_bottom = abs(z_mean - original_z_min) < tolerance
+                    at_original_top = abs(z_mean - original_z_max) < tolerance
+
+                    if at_original_bottom or at_original_top:
+                        # This is an original end cap - counts as exterior
+                        exterior_area += face_areas[face_idx]
+                    else:
+                        # This is a cut face - counts as interior
+                        interior_area += face_areas[face_idx]
+                else:
+                    # Not flat or not at boundary - must be side surface (exterior)
+                    exterior_area += face_areas[face_idx]
 
         return exterior_area, interior_area
 
