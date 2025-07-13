@@ -129,6 +129,9 @@ class MeshSegmenter:
                 centroid=component.centroid,
             )
 
+            # Store original mesh bounds for accurate cut face detection
+            segment._original_mesh_bounds = mesh.bounds
+
             segments.append(segment)
             self.segments.append(segment)
 
@@ -267,102 +270,56 @@ class MeshSegmenter:
         """
         Mark faces that are likely cut faces (interior surfaces) in the mesh metadata.
 
-        Cut faces are typically flat faces near the z boundaries with normal vectors
-        pointing along the z-axis.
+        NOTE: This method is now deprecated since we use direct geometric analysis
+        in _analyze_face_types instead of relying on metadata.
         """
-        try:
-            if not hasattr(mesh, "metadata"):
-                mesh.metadata = {}
-
-            # Get face centers and normals
-            face_centers = mesh.triangles_center
-            face_normals = mesh.face_normals
-
-            # Identify faces near the z boundaries
-            tolerance = 1e-3
-            at_z_min = np.abs(face_centers[:, 2] - z_min) < tolerance
-            at_z_max = np.abs(face_centers[:, 2] - z_max) < tolerance
-
-            # Also check if normals are roughly aligned with z-axis (flat cut faces)
-            normal_z_component = np.abs(face_normals[:, 2])
-            is_flat = normal_z_component > 0.9  # cos(~25°) threshold
-
-            # Cut faces are flat faces at the boundaries
-            cut_face_mask = (at_z_min | at_z_max) & is_flat
-            cut_face_indices = np.where(cut_face_mask)[0].tolist()
-
-            mesh.metadata["interior_face_indices"] = cut_face_indices
-            mesh.metadata["z_min"] = z_min
-            mesh.metadata["z_max"] = z_max
-
-        except Exception as e:
-            warnings.warn(f"Failed to mark cut faces: {e}")
+        # This method is kept for compatibility but no longer used
+        pass
 
     def _analyze_face_types(self, segment_mesh: trimesh.Trimesh, z_min: float, z_max: float) -> Tuple[float, float]:
         """
         Analyze faces to distinguish exterior vs interior (cut) faces.
 
-        Interior faces are cut faces created during slicing (marked in metadata).
-        Exterior faces are original mesh surfaces (cylindrical sides, end caps).
+        CORRECTED LOGIC:
+        - Interior faces = newly created cut faces from slicing operations
+        - Exterior faces = all original mesh faces (sides and caps)
+
+        Cut faces are identified as:
+        1. Flat faces (normal aligned with z-axis)
+        2. Located at slice boundaries (z_min or z_max)
+        3. NOT at original mesh boundaries (which are caps, not cuts)
 
         Returns:
             Tuple of (exterior_area, interior_area)
         """
         face_areas = segment_mesh.area_faces
+        face_centers = segment_mesh.triangles_center
+        face_normals = segment_mesh.face_normals
 
-        exterior_area = 0.0
-        interior_area = 0.0
+        tolerance = 1e-3
+        original_z_min, original_z_max = self.original_mesh.bounds[:, 2]
 
-        # Check if we have metadata about cut faces
-        if hasattr(segment_mesh, "metadata") and "interior_face_indices" in segment_mesh.metadata:
-            # Use the pre-computed interior face indices
-            interior_face_indices = set(segment_mesh.metadata["interior_face_indices"])
+        # Find flat faces (high z-component in normal)
+        normal_z = np.abs(face_normals[:, 2])
+        is_flat = normal_z > 0.9  # cos(~25°)
 
-            for face_idx in range(len(face_areas)):
-                if face_idx in interior_face_indices:
-                    interior_area += face_areas[face_idx]
-                else:
-                    exterior_area += face_areas[face_idx]
+        # Find faces at slice boundaries
+        z_coords = face_centers[:, 2]
+        at_slice_bottom = np.abs(z_coords - z_min) < tolerance
+        at_slice_top = np.abs(z_coords - z_max) < tolerance
+        at_slice_boundary = at_slice_bottom | at_slice_top
 
-        else:
-            # Fallback to heuristic method if metadata not available
-            vertices = segment_mesh.vertices
-            faces = segment_mesh.faces
+        # Find faces at original mesh boundaries (caps)
+        at_original_bottom = np.abs(z_coords - original_z_min) < tolerance
+        at_original_top = np.abs(z_coords - original_z_max) < tolerance
+        at_original_boundary = at_original_bottom | at_original_top
 
-            # Adaptive tolerance based on slice width
-            slice_width = z_max - z_min
-            tolerance = max(1e-3, slice_width * 0.1)  # 10% of slice width or minimum 1e-3
+        # Cut faces are flat faces at slice boundaries that are NOT original caps
+        is_cut_face = is_flat & at_slice_boundary & (~at_original_boundary)
 
-            # Get original mesh bounds to distinguish end caps from cut faces
-            original_z_min, original_z_max = self.original_mesh.bounds[:, 2]
-
-            for face_idx, face in enumerate(faces):
-                face_verts = vertices[face]
-                face_z_coords = face_verts[:, 2]
-
-                # Check if face is on a cut plane
-                z_mean = np.mean(face_z_coords)
-                z_std = np.std(face_z_coords)
-
-                # If face is flat (low std) and at boundary, it could be a cut face or end cap
-                is_flat = z_std < tolerance
-                at_bottom_boundary = abs(z_mean - z_min) < tolerance
-                at_top_boundary = abs(z_mean - z_max) < tolerance
-
-                if is_flat and (at_bottom_boundary or at_top_boundary):
-                    # Check if this is actually an original mesh end cap or a cut face
-                    at_original_bottom = abs(z_mean - original_z_min) < tolerance
-                    at_original_top = abs(z_mean - original_z_max) < tolerance
-
-                    if at_original_bottom or at_original_top:
-                        # This is an original end cap - counts as exterior
-                        exterior_area += face_areas[face_idx]
-                    else:
-                        # This is a cut face - counts as interior
-                        interior_area += face_areas[face_idx]
-                else:
-                    # Not flat or not at boundary - must be side surface (exterior)
-                    exterior_area += face_areas[face_idx]
+        # Calculate areas
+        interior_area = face_areas[is_cut_face].sum()
+        exterior_area = face_areas[~is_cut_face].sum()
 
         return exterior_area, interior_area
 
@@ -387,39 +344,199 @@ class MeshSegmenter:
             self._connect_adjacent_segments(current_segments, next_segments)
 
     def _connect_adjacent_segments(self, segments1: List[Segment], segments2: List[Segment]):
-        """Find connections between segments in adjacent slices based on geometric overlap."""
+        """
+        Find all valid connections between segments in adjacent slices based on shared cut faces.
+
+        This handles general topologies including:
+        - 1 segment → multiple segments (branch points)
+        - Multiple segments → 1 segment (merge points)
+        - Multiple segments → multiple segments (complex topology)
+
+        Segments are connected if and only if they share an internal (cut) face.
+        """
         if not segments1 or not segments2:
             return
 
-        # For each pair of segments in adjacent slices, check if they geometrically connect
+        # Test all possible pairs for actual cut face sharing
+        valid_connections = []
         for seg1 in segments1:
             for seg2 in segments2:
-                if self._segments_are_connected(seg1, seg2):
-                    # Calculate actual distance between segment centroids
+                if self._segments_share_actual_cut_face(seg1, seg2):
                     distance = np.linalg.norm(seg1.centroid - seg2.centroid)
-                    self.connectivity_graph.add_edge(seg1.id, seg2.id, distance=distance, type="adjacent_slice")
+                    valid_connections.append((seg1, seg2, distance))
+
+        # Add all valid connections (no artificial one-to-one restriction)
+        for seg1, seg2, distance in valid_connections:
+            self.connectivity_graph.add_edge(seg1.id, seg2.id, distance=distance, type="adjacent_slice")
+
+    def _segments_share_actual_cut_face(self, seg1: Segment, seg2: Segment) -> bool:
+        """
+        Determine if two segments actually share a cut face at their boundary.
+
+        This is the core test for connectivity - segments are connected if and only if
+        they share a substantial portion of their cut surface at the slice boundary.
+        """
+        # Get the shared Z boundary between segments
+        if abs(seg1.z_max - seg2.z_min) < 1e-6:
+            shared_z = seg1.z_max
+        elif abs(seg2.z_max - seg1.z_min) < 1e-6:
+            shared_z = seg2.z_max
+        else:
+            return False
+
+        # First quick test: centroids must be reasonably close
+        centroid_distance = np.linalg.norm(seg1.centroid[:2] - seg2.centroid[:2])
+        if centroid_distance > 2.0:  # Reasonable proximity threshold
+            return False
+
+        # Detailed test: check for actual cut surface overlap
+        return self._detailed_cut_surface_overlap(seg1, seg2, shared_z)
+
+    def _detailed_cut_surface_overlap(self, seg1: Segment, seg2: Segment, shared_z: float) -> bool:
+        """
+        Detailed analysis of cut surface overlap between two segments.
+
+        Returns True if segments share a significant portion of cut surface area.
+        """
+        tolerance = 1e-3
+
+        # Get cut surface vertices for both segments
+        cut_verts1 = self._get_cut_surface_vertices(seg1, shared_z, tolerance)
+        cut_verts2 = self._get_cut_surface_vertices(seg2, shared_z, tolerance)
+
+        if len(cut_verts1) == 0 or len(cut_verts2) == 0:
+            return False
+
+        # Calculate overlap using spatial proximity of vertices
+        overlap_score = self._calculate_spatial_overlap(cut_verts1, cut_verts2)
+
+        # Require meaningful overlap (>10% of smaller surface)
+        return overlap_score > 0.1
+
+    def _calculate_spatial_overlap(self, verts1: np.ndarray, verts2: np.ndarray) -> float:
+        """
+        Calculate spatial overlap between two sets of cut surface vertices.
+
+        Uses a more robust approach that considers vertex density and spatial distribution.
+        """
+        if len(verts1) == 0 or len(verts2) == 0:
+            return 0.0
+
+        # For efficiency, work with the smaller set
+        if len(verts1) > len(verts2):
+            verts1, verts2 = verts2, verts1
+
+        # Calculate what fraction of vertices in set1 have close neighbors in set2
+        overlap_threshold = 0.15  # Distance threshold for considering vertices "overlapping"
+        overlapping_vertices = 0
+
+        for v1 in verts1:
+            # Find closest vertex in verts2
+            distances = np.linalg.norm(verts2 - v1, axis=1)
+            min_distance = np.min(distances)
+
+            if min_distance < overlap_threshold:
+                overlapping_vertices += 1
+
+        return overlapping_vertices / len(verts1) if len(verts1) > 0 else 0.0
+
+    def _segments_are_connected_strict(self, seg1: Segment, seg2: Segment) -> bool:
+        """Strict connectivity test for multi-segment slices."""
+        # Get the shared Z boundary between segments
+        if abs(seg1.z_max - seg2.z_min) < 1e-6:
+            shared_z = seg1.z_max
+        elif abs(seg2.z_max - seg1.z_min) < 1e-6:
+            shared_z = seg2.z_max
+        else:
+            return False
+
+        # Very strict test for multi-segment slices
+        centroid_distance = np.linalg.norm(seg1.centroid[:2] - seg2.centroid[:2])
+        if centroid_distance > 1.0:
+            return False
+
+        return self._segments_share_cut_surface(seg1, seg2, shared_z)
+
+    def _segments_are_connected_permissive(self, seg1: Segment, seg2: Segment) -> bool:
+        """Permissive connectivity test for single-segment connections."""
+        # Get the shared Z boundary between segments
+        if abs(seg1.z_max - seg2.z_min) < 1e-6:
+            shared_z = seg1.z_max
+        elif abs(seg2.z_max - seg1.z_min) < 1e-6:
+            shared_z = seg2.z_max
+        else:
+            return False
+
+        # For single segments, use generous geometric proximity
+        centroid_distance = np.linalg.norm(seg1.centroid[:2] - seg2.centroid[:2])
+        if centroid_distance > 3.0:  # Very generous threshold
+            return False
+
+        # Check for any cut surface overlap with permissive thresholds
+        return self._segments_share_cut_surface_permissive(seg1, seg2, shared_z)
+
+    def _segments_share_cut_surface_permissive(self, seg1: Segment, seg2: Segment, shared_z: float) -> bool:
+        """
+        Permissive test for shared cut surface - allows more generous overlap requirements.
+        """
+        tolerance = 1e-3
+
+        # Get cut surface vertices for both segments
+        cut_verts1 = self._get_cut_surface_vertices(seg1, shared_z, tolerance)
+        cut_verts2 = self._get_cut_surface_vertices(seg2, shared_z, tolerance)
+
+        if len(cut_verts1) == 0 or len(cut_verts2) == 0:
+            # If no cut surface found, fall back to simple proximity
+            return True  # For single segments, assume connection if centroids are close
+
+        # Calculate overlap with very generous threshold
+        overlap_score = self._calculate_surface_overlap(cut_verts1, cut_verts2)
+
+        # Much more permissive overlap requirement (>5% is enough)
+        return overlap_score > 0.05
+
+    def _calculate_connection_strength(self, seg1: Segment, seg2: Segment) -> float:
+        """
+        Calculate the strength of connection between two segments.
+
+        Higher scores indicate stronger connections (closer centroids, better boundary overlap).
+        """
+        # Primary factor: centroid distance (closer is better)
+        centroid_distance = np.linalg.norm(seg1.centroid - seg2.centroid)
+        distance_score = 1.0 / (1.0 + centroid_distance)
+
+        # Secondary factor: XY distance (for torus, segments should be close in XY)
+        xy_distance = np.linalg.norm(seg1.centroid[:2] - seg2.centroid[:2])
+        xy_score = 1.0 / (1.0 + xy_distance)
+
+        # Combine scores (emphasize XY proximity for torus)
+        return distance_score * 0.3 + xy_score * 0.7
 
     def _segments_are_connected(self, seg1: Segment, seg2: Segment) -> bool:
         """
-        Check if two segments from adjacent slices are geometrically connected.
+        Check if two segments from adjacent slices are connected by sharing an internal face.
 
-        This uses a more sophisticated approach than simple centroid distance.
+        For torus topology, we need to be very strict to avoid false connections
+        across the hole. Only truly adjacent segments should be connected.
         """
-        # Method 1: Check if the 2D projections of the segments overlap
-        # Project both segments onto the XY plane and check for overlap
+        # Get the shared Z boundary between segments
+        if abs(seg1.z_max - seg2.z_min) < 1e-6:
+            # seg1 is below seg2, check shared face at seg1.z_max / seg2.z_min
+            shared_z = seg1.z_max
+        elif abs(seg2.z_max - seg1.z_min) < 1e-6:
+            # seg2 is below seg1, check shared face at seg2.z_max / seg1.z_min
+            shared_z = seg2.z_max
+        else:
+            # Segments are not adjacent in Z
+            return False
 
-        # Get boundary points of each segment at their respective slice boundaries
-        boundary1 = self._get_segment_boundary_at_z(seg1, seg1.z_max)  # Top of lower segment
-        boundary2 = self._get_segment_boundary_at_z(seg2, seg2.z_min)  # Bottom of upper segment
+        # Very strict test: segments must have close centroids AND overlapping boundaries
+        centroid_distance = np.linalg.norm(seg1.centroid[:2] - seg2.centroid[:2])
+        if centroid_distance > 1.0:  # Must be reasonably close in XY
+            return False
 
-        if boundary1 is None or boundary2 is None:
-            # Fall back to centroid-based distance check
-            xy_distance = np.linalg.norm(seg1.centroid[:2] - seg2.centroid[:2])
-            threshold = self._compute_connection_threshold(seg1, seg2)
-            return xy_distance < threshold
-
-        # Check if the boundaries overlap in XY space
-        return self._boundaries_overlap(boundary1, boundary2)
+        # Check if both segments have cut faces at the shared Z level that overlap
+        return self._segments_share_cut_surface(seg1, seg2, shared_z)
 
     def _get_segment_boundary_at_z(self, segment: Segment, z_level: float) -> Optional[np.ndarray]:
         """
@@ -1077,3 +1194,239 @@ class MeshSegmenter:
             print(f"    Bottom faces: {bottom_faces}, Top faces: {top_faces}, Side faces: {side_faces}")
 
         return True
+
+    def _segments_share_internal_face(self, seg1: Segment, seg2: Segment, shared_z: float) -> bool:
+        """
+        Check if two segments share an internal (cut) face at the given Z level.
+
+        This uses a more sophisticated approach: we check if the segments have
+        overlapping cut surface regions at the shared Z level.
+
+        Args:
+            seg1, seg2: The two segments to check
+            shared_z: The Z coordinate where they might share a face
+
+        Returns:
+            True if segments share an internal face, False otherwise
+        """
+        tolerance = 1e-3
+
+        # Get the 2D boundary contours for both segments at the shared Z level
+        boundary1 = self._get_cut_boundary_at_z(seg1, shared_z, tolerance)
+        boundary2 = self._get_cut_boundary_at_z(seg2, shared_z, tolerance)
+
+        if boundary1 is None or boundary2 is None:
+            return False
+
+        # Check if the boundaries substantially overlap
+        return self._boundaries_substantially_overlap(boundary1, boundary2)
+
+    def _get_cut_boundary_at_z(self, segment: Segment, z_level: float, tolerance: float):
+        """
+        Get the 2D boundary contour of the cut surface at the specified Z level.
+
+        Returns the XY coordinates of vertices that form the boundary of the cut face.
+        """
+        face_centers = segment.mesh.triangles_center
+        face_normals = segment.mesh.face_normals
+
+        # Find faces at the specified Z level that are cut faces
+        at_z_level = np.abs(face_centers[:, 2] - z_level) < tolerance
+
+        # Cut faces are flat faces (normal aligned with z-axis)
+        normal_z = np.abs(face_normals[:, 2])
+        is_flat = normal_z > 0.9
+
+        # Check if this is NOT an original mesh boundary
+        if hasattr(segment, "_original_mesh_bounds"):
+            original_z_min, original_z_max = segment._original_mesh_bounds[:, 2]
+            at_original_boundary = (np.abs(z_level - original_z_min) < tolerance) | (
+                np.abs(z_level - original_z_max) < tolerance
+            )
+            if at_original_boundary:
+                return None  # This is an original cap, not a cut face
+
+        # Find cut faces
+        is_cut_face = at_z_level & is_flat
+        cut_face_indices = np.where(is_cut_face)[0]
+
+        if len(cut_face_indices) == 0:
+            return None
+
+        # Collect all vertices from cut faces and project to XY plane
+        cut_vertices = []
+        for face_idx in cut_face_indices:
+            face_verts = segment.mesh.vertices[segment.mesh.faces[face_idx]]
+            # Project to XY plane
+            for vertex in face_verts:
+                cut_vertices.append(vertex[:2])  # XY coordinates only
+
+        if len(cut_vertices) == 0:
+            return None
+
+        return np.array(cut_vertices)
+
+    def _boundaries_substantially_overlap(self, boundary1: np.ndarray, boundary2: np.ndarray) -> bool:
+        """
+        Check if two 2D boundaries substantially overlap.
+
+        For torus connectivity, we need to be very strict to avoid connecting
+        segments across the hole. We use both centroid proximity and significant
+        vertex overlap.
+        """
+        if len(boundary1) == 0 or len(boundary2) == 0:
+            return False
+
+        # Calculate centroids
+        centroid1 = np.mean(boundary1, axis=0)
+        centroid2 = np.mean(boundary2, axis=0)
+
+        # Centroids must be very close for true connectivity
+        centroid_distance = np.linalg.norm(centroid1 - centroid2)
+        if centroid_distance > 0.1:  # Very strict threshold
+            return False
+
+        # For each vertex in boundary1, find the closest vertex in boundary2
+        min_distances = []
+        for v1 in boundary1:
+            distances = [np.linalg.norm(v1 - v2) for v2 in boundary2]
+            min_distances.append(min(distances))
+
+        # Calculate what fraction of vertices have a very close match
+        close_vertices = sum(1 for d in min_distances if d < 0.05)  # Very strict
+        overlap_fraction = close_vertices / len(boundary1) if len(boundary1) > 0 else 0
+
+        # Require substantial overlap (at least 50% of vertices very close)
+        return overlap_fraction > 0.5
+
+    def _get_internal_faces_at_z(self, segment: Segment, z_level: float, tolerance: float):
+        """Get all internal (cut) faces of a segment at the specified Z level."""
+        face_centers = segment.mesh.triangles_center
+        face_normals = segment.mesh.face_normals
+
+        # Find faces at the specified Z level that are internal (cut faces)
+        at_z_level = np.abs(face_centers[:, 2] - z_level) < tolerance
+
+        # Internal faces are flat faces (normal aligned with z-axis) at slice boundaries
+        normal_z = np.abs(face_normals[:, 2])
+        is_flat = normal_z > 0.9
+
+        # Find faces at slice boundaries (not original mesh boundaries)
+        # Get original mesh bounds from the parent segmenter if available
+        if hasattr(segment, "_original_mesh_bounds"):
+            original_z_min, original_z_max = segment._original_mesh_bounds[:, 2]
+        else:
+            # Fall back to segment mesh bounds (less reliable)
+            original_z_min, original_z_max = segment.mesh.bounds[:, 2]
+
+        at_original_boundary = (np.abs(face_centers[:, 2] - original_z_min) < tolerance) | (
+            np.abs(face_centers[:, 2] - original_z_max) < tolerance
+        )
+
+        # Internal faces are flat faces at Z level that are NOT original boundaries
+        is_internal = at_z_level & is_flat & (~at_original_boundary)
+
+        internal_face_indices = np.where(is_internal)[0]
+
+        # Return vertex coordinates for each internal face
+        internal_faces = []
+        for face_idx in internal_face_indices:
+            face_vertices = segment.mesh.vertices[segment.mesh.faces[face_idx]]
+            internal_faces.append(face_vertices)
+
+        return internal_faces
+
+    def _faces_spatially_overlap(self, face1_verts: np.ndarray, face2_verts: np.ndarray) -> bool:
+        """
+        Check if two triangular faces are essentially the same cut face (shared between segments).
+
+        For segments to be connected, they must share the exact same cut face.
+        This means the faces should have nearly identical vertex positions.
+
+        Args:
+            face1_verts: 3x3 array of vertices for face 1
+            face2_verts: 3x3 array of vertices for face 2
+
+        Returns:
+            True if faces are the same cut face, False otherwise
+        """
+        tolerance = 1e-2  # More generous tolerance for mesh precision
+
+        # Check if face centroids are very close
+        centroid1 = np.mean(face1_verts, axis=0)
+        centroid2 = np.mean(face2_verts, axis=0)
+
+        if np.linalg.norm(centroid1 - centroid2) > tolerance:
+            return False
+
+        # For shared cut faces, we need substantial vertex overlap
+        # Check how many vertices from face1 have a close match in face2
+        matched_vertices = 0
+
+        for v1 in face1_verts:
+            for v2 in face2_verts:
+                if np.linalg.norm(v1 - v2) < tolerance:
+                    matched_vertices += 1
+                    break  # Don't double-count vertices
+
+        # Require at least 2 vertices to match (shared edge minimum)
+        # For truly shared faces, all 3 should match
+        return matched_vertices >= 2
+
+    def _segments_share_cut_surface(self, seg1: Segment, seg2: Segment, shared_z: float) -> bool:
+        """
+        Very strict test for shared cut surface between segments.
+
+        For torus, we need to ensure segments only connect if they truly share
+        a substantial portion of their cut surface.
+        """
+        tolerance = 1e-3
+
+        # Get cut surface vertices for both segments
+        cut_verts1 = self._get_cut_surface_vertices(seg1, shared_z, tolerance)
+        cut_verts2 = self._get_cut_surface_vertices(seg2, shared_z, tolerance)
+
+        if len(cut_verts1) == 0 or len(cut_verts2) == 0:
+            return False
+
+        # Calculate how much the cut surfaces overlap
+        overlap_score = self._calculate_surface_overlap(cut_verts1, cut_verts2)
+
+        # Require substantial overlap (>30% of smaller surface)
+        return overlap_score > 0.3
+
+    def _get_cut_surface_vertices(self, segment: Segment, z_level: float, tolerance: float):
+        """Get XY coordinates of all vertices that form the cut surface at z_level."""
+        vertices = segment.mesh.vertices
+
+        # Find vertices at the cut surface
+        at_z_level = np.abs(vertices[:, 2] - z_level) < tolerance
+        cut_vertices = vertices[at_z_level]
+
+        if len(cut_vertices) == 0:
+            return np.array([])
+
+        # Return XY coordinates only
+        return cut_vertices[:, :2]
+
+    def _calculate_surface_overlap(self, verts1: np.ndarray, verts2: np.ndarray) -> float:
+        """
+        Calculate overlap between two sets of cut surface vertices.
+
+        Returns fraction of vertices in smaller set that have close matches in larger set.
+        """
+        if len(verts1) == 0 or len(verts2) == 0:
+            return 0.0
+
+        # Make verts1 the smaller set for efficiency
+        if len(verts1) > len(verts2):
+            verts1, verts2 = verts2, verts1
+
+        # For each vertex in smaller set, find closest vertex in larger set
+        overlap_count = 0
+        for v1 in verts1:
+            min_distance = min(np.linalg.norm(v1 - v2) for v2 in verts2)
+            if min_distance < 0.1:  # Vertex has a close match
+                overlap_count += 1
+
+        return overlap_count / len(verts1) if len(verts1) > 0 else 0.0
