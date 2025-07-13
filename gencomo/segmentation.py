@@ -477,34 +477,24 @@ class MeshSegmenter:
         print(f"Exported {len(self.segments)} segments to {output_dir}/")
 
     def visualize_connectivity_graph(self, save_path: Optional[str] = None):
-        """Visualize the segment connectivity graph."""
+        """Visualize the segment connectivity graph with slice-based layout."""
         try:
             import matplotlib.pyplot as plt
 
-            # Create layout
-            pos = {}
-            for segment in self.segments:
-                # Position nodes by slice index and centroid
-                x = segment.slice_index
-                y = segment.centroid[1]  # Use y-coordinate of centroid
-                pos[segment.id] = (x, y)
+            if not self.segments:
+                print("No segments to visualize")
+                return
 
+            # Create improved layout with better spacing
+            pos = self._create_improved_layout()
+
+            # Create single figure for slice-based layout
             plt.figure(figsize=(12, 8))
 
-            # Draw nodes
-            node_sizes = [seg.volume * 1000 for seg in self.segments]  # Scale for visibility
-            nx.draw_networkx_nodes(self.connectivity_graph, pos, node_size=node_sizes, alpha=0.7)
+            # Draw slice-based layout
+            self._draw_slice_layout(plt.gca(), pos)
 
-            # Draw edges
-            nx.draw_networkx_edges(self.connectivity_graph, pos, alpha=0.5)
-
-            # Add labels
-            labels = {seg.id: f"S{seg.slice_index}.{seg.segment_index}" for seg in self.segments}
-            nx.draw_networkx_labels(self.connectivity_graph, pos, labels, font_size=8)
-
-            plt.title("Segment Connectivity Graph")
-            plt.xlabel("Slice Index")
-            plt.ylabel("Y Coordinate")
+            plt.tight_layout()
 
             if save_path:
                 plt.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -513,6 +503,311 @@ class MeshSegmenter:
 
         except ImportError:
             print("matplotlib not available for visualization")
+
+    def visualize_connectivity_graph_3d(self, save_path: Optional[str] = None, backend: str = "plotly"):
+        """
+        Visualize the segment connectivity graph in 3D using actual segment centroids.
+
+        Args:
+            save_path: Optional path to save the visualization
+            backend: Visualization backend ('plotly' or 'matplotlib')
+        """
+        if not self.segments:
+            print("No segments to visualize")
+            return
+
+        if backend.lower() == "plotly":
+            self._visualize_3d_plotly(save_path)
+        else:
+            self._visualize_3d_matplotlib(save_path)
+
+    def _visualize_3d_plotly(self, save_path: Optional[str] = None):
+        """Create 3D visualization using Plotly."""
+        try:
+            import plotly.graph_objects as go
+            import plotly.express as px
+
+            # Extract node positions (centroids) and properties
+            node_positions = []
+            node_volumes = []
+            node_labels = []
+            node_colors = []
+
+            for segment in self.segments:
+                node_positions.append(segment.centroid)
+                node_volumes.append(segment.volume)
+                node_labels.append(f"S{segment.slice_index}.{segment.segment_index}")
+                # Color by slice index
+                node_colors.append(segment.slice_index)
+
+            node_positions = np.array(node_positions)
+
+            # Extract edge positions
+            edge_x, edge_y, edge_z = [], [], []
+            for edge in self.connectivity_graph.edges():
+                seg1 = self.get_segment_by_id(edge[0])
+                seg2 = self.get_segment_by_id(edge[1])
+
+                if seg1 and seg2:
+                    # Add line from seg1 centroid to seg2 centroid
+                    edge_x.extend([seg1.centroid[0], seg2.centroid[0], None])
+                    edge_y.extend([seg1.centroid[1], seg2.centroid[1], None])
+                    edge_z.extend([seg1.centroid[2], seg2.centroid[2], None])
+
+            # Create edge trace
+            edge_trace = go.Scatter3d(
+                x=edge_x,
+                y=edge_y,
+                z=edge_z,
+                mode="lines",
+                line=dict(color="gray", width=2),
+                hoverinfo="none",
+                name="Connections",
+            )
+
+            # Normalize node sizes for better visualization
+            min_vol, max_vol = min(node_volumes), max(node_volumes)
+            if max_vol > min_vol:
+                normalized_sizes = [(vol - min_vol) / (max_vol - min_vol) * 15 + 5 for vol in node_volumes]
+            else:
+                normalized_sizes = [10] * len(node_volumes)
+
+            # Create node trace
+            node_trace = go.Scatter3d(
+                x=node_positions[:, 0],
+                y=node_positions[:, 1],
+                z=node_positions[:, 2],
+                mode="markers+text",
+                marker=dict(
+                    size=normalized_sizes,
+                    color=node_colors,
+                    colorscale="viridis",
+                    showscale=True,
+                    colorbar=dict(title="Slice Index"),
+                    line=dict(width=1, color="black"),
+                ),
+                text=node_labels,
+                textposition="middle center",
+                textfont=dict(size=8, color="white"),
+                hovertemplate="<b>%{text}</b><br>"
+                + "X: %{x:.2f}<br>"
+                + "Y: %{y:.2f}<br>"
+                + "Z: %{z:.2f}<br>"
+                + "Volume: %{customdata:.4f}<extra></extra>",
+                customdata=node_volumes,
+                name="Segments",
+            )
+
+            # Create figure
+            fig = go.Figure(data=[edge_trace, node_trace])
+
+            fig.update_layout(
+                title="3D Segment Connectivity Graph",
+                scene=dict(
+                    xaxis_title="X (μm)",
+                    yaxis_title="Y (μm)",
+                    zaxis_title="Z (μm)",
+                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),
+                    aspectmode="data",
+                ),
+                showlegend=True,
+                width=800,
+                height=600,
+            )
+
+            if save_path:
+                fig.write_html(save_path)
+                print(f"3D visualization saved to {save_path}")
+            else:
+                fig.show()
+
+        except ImportError:
+            print("Plotly not available. Try 'pip install plotly' or use backend='matplotlib'")
+
+    def _visualize_3d_matplotlib(self, save_path: Optional[str] = None):
+        """Create 3D visualization using Matplotlib."""
+        try:
+            import matplotlib.pyplot as plt
+            from mpl_toolkits.mplot3d import Axes3D
+
+            fig = plt.figure(figsize=(12, 9))
+            ax = fig.add_subplot(111, projection="3d")
+
+            # Extract node positions and properties
+            node_positions = np.array([seg.centroid for seg in self.segments])
+            node_volumes = [seg.volume for seg in self.segments]
+            node_colors = [seg.slice_index for seg in self.segments]
+
+            # Normalize node sizes
+            min_vol, max_vol = min(node_volumes), max(node_volumes)
+            if max_vol > min_vol:
+                normalized_sizes = [(vol - min_vol) / (max_vol - min_vol) * 200 + 20 for vol in node_volumes]
+            else:
+                normalized_sizes = [50] * len(node_volumes)
+
+            # Draw edges
+            for edge in self.connectivity_graph.edges():
+                seg1 = self.get_segment_by_id(edge[0])
+                seg2 = self.get_segment_by_id(edge[1])
+
+                if seg1 and seg2:
+                    ax.plot3D(
+                        [seg1.centroid[0], seg2.centroid[0]],
+                        [seg1.centroid[1], seg2.centroid[1]],
+                        [seg1.centroid[2], seg2.centroid[2]],
+                        "gray",
+                        alpha=0.6,
+                        linewidth=1,
+                    )
+
+            # Draw nodes
+            scatter = ax.scatter(
+                node_positions[:, 0],
+                node_positions[:, 1],
+                node_positions[:, 2],
+                s=normalized_sizes,
+                c=node_colors,
+                cmap="viridis",
+                alpha=0.8,
+                edgecolors="black",
+                linewidth=0.5,
+            )
+
+            # Add labels for nodes
+            for i, segment in enumerate(self.segments):
+                ax.text(
+                    segment.centroid[0],
+                    segment.centroid[1],
+                    segment.centroid[2],
+                    f"S{segment.slice_index}.{segment.segment_index}",
+                    fontsize=7,
+                    ha="center",
+                    va="center",
+                )
+
+            # Set labels and title
+            ax.set_xlabel("X (μm)")
+            ax.set_ylabel("Y (μm)")
+            ax.set_zlabel("Z (μm)")
+            ax.set_title("3D Segment Connectivity Graph")
+
+            # Add colorbar
+            cbar = plt.colorbar(scatter, ax=ax, shrink=0.5, aspect=20)
+            cbar.set_label("Slice Index")
+
+            # Set equal aspect ratio
+            max_range = (
+                np.array(
+                    [
+                        node_positions[:, 0].max() - node_positions[:, 0].min(),
+                        node_positions[:, 1].max() - node_positions[:, 1].min(),
+                        node_positions[:, 2].max() - node_positions[:, 2].min(),
+                    ]
+                ).max()
+                / 2.0
+            )
+
+            mid_x = (node_positions[:, 0].max() + node_positions[:, 0].min()) * 0.5
+            mid_y = (node_positions[:, 1].max() + node_positions[:, 1].min()) * 0.5
+            mid_z = (node_positions[:, 2].max() + node_positions[:, 2].min()) * 0.5
+
+            ax.set_xlim(mid_x - max_range, mid_x + max_range)
+            ax.set_ylim(mid_y - max_range, mid_y + max_range)
+            ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+            if save_path:
+                plt.savefig(save_path, dpi=150, bbox_inches="tight")
+                print(f"3D visualization saved to {save_path}")
+            else:
+                plt.show()
+
+        except ImportError:
+            print("Matplotlib or mpl_toolkits not available for 3D plotting")
+
+    def _create_improved_layout(self) -> Dict[str, Tuple[float, float]]:
+        """Create an improved layout that avoids overlapping nodes."""
+        pos = {}
+
+        # Group segments by slice
+        slice_segments = {}
+        for segment in self.segments:
+            slice_idx = segment.slice_index
+            if slice_idx not in slice_segments:
+                slice_segments[slice_idx] = []
+            slice_segments[slice_idx].append(segment)
+
+        # Position segments with better spacing
+        for slice_idx, segments in slice_segments.items():
+            num_segments = len(segments)
+
+            if num_segments == 1:
+                # Single segment: center it
+                pos[segments[0].id] = (slice_idx, 0)
+            else:
+                # Multiple segments: spread them vertically with adequate spacing
+                segment_spacing = 2.0  # Increase spacing between segments
+                y_start = -(num_segments - 1) * segment_spacing / 2
+
+                # Sort segments by y-centroid for consistent ordering
+                segments_sorted = sorted(segments, key=lambda s: s.centroid[1])
+
+                for i, segment in enumerate(segments_sorted):
+                    y_pos = y_start + i * segment_spacing
+                    pos[segment.id] = (slice_idx, y_pos)
+
+        return pos
+
+    def _draw_slice_layout(self, ax, pos):
+        """Draw the slice-based layout."""
+        # Customize node appearance based on properties
+        node_colors = []
+        node_sizes = []
+
+        for segment in self.segments:
+            # Color by volume (larger = darker)
+            volume_normalized = min(segment.volume / max(s.volume for s in self.segments), 1.0)
+            import matplotlib.pyplot as plt
+
+            node_colors.append(plt.cm.viridis(volume_normalized))
+
+            # Size by volume with better scaling
+            size = max(50, min(500, segment.volume * 800))
+            node_sizes.append(size)
+
+        # Draw nodes with improved styling
+        nx.draw_networkx_nodes(
+            self.connectivity_graph, pos, node_color=node_colors, node_size=node_sizes, alpha=0.8, ax=ax
+        )
+
+        # Draw edges with curved connections to reduce overlap
+        nx.draw_networkx_edges(
+            self.connectivity_graph,
+            pos,
+            edge_color="gray",
+            alpha=0.6,
+            width=1.5,
+            style="solid",
+            connectionstyle="arc3,rad=0.1",  # Curved edges
+            ax=ax,
+        )
+
+        # Add improved labels
+        labels = {}
+        for seg in self.segments:
+            slice_segments = [s for s in self.segments if s.slice_index == seg.slice_index]
+            if len(slice_segments) > 1:
+                labels[seg.id] = f"S{seg.slice_index}.{seg.segment_index}"
+            else:
+                labels[seg.id] = f"S{seg.slice_index}"
+
+        nx.draw_networkx_labels(
+            self.connectivity_graph, pos, labels, font_size=9, font_weight="bold", font_color="white", ax=ax
+        )
+
+        ax.set_title("Segment Connectivity Graph", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Slice Index", fontsize=10)
+        ax.set_ylabel("Segment Position", fontsize=10)
+        ax.grid(True, alpha=0.3)
 
     def _add_caps_to_slice(self, mesh: trimesh.Trimesh, z_min: float, z_max: float) -> trimesh.Trimesh:
         """Add caps to close the slice at z_min and z_max boundaries."""
