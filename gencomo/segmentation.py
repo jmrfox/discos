@@ -151,36 +151,40 @@ class MeshSegmenter:
 
     def _extract_slice_mesh(self, mesh: trimesh.Trimesh, z_min: float, z_max: float) -> Optional[trimesh.Trimesh]:
         """
-        Extract mesh portion between z_min and z_max using face selection approach.
+        Extract mesh portion between z_min and z_max using plane cutting.
 
-        This creates a proper 3D segment by selecting all faces that intersect the z-range,
-        ensuring we get exactly one segment per closed region in the slice.
+        This properly cuts the mesh at the z boundaries using manual vertex clamping
+        for reliable results.
         """
         try:
-            vertices = mesh.vertices
-            faces = mesh.faces
+            # Start with a copy of the original mesh
+            vertices = mesh.vertices.copy()
+            faces = mesh.faces.copy()
 
-            # Get z-coordinates for all vertices of each face
-            face_vertices = vertices[faces]  # Shape: (n_faces, 3, 3)
-            face_z_coords = face_vertices[:, :, 2]  # Z coordinates for each vertex of each face
+            # Clamp vertices to the z-range [z_min, z_max]
+            # This effectively "cuts" the mesh at both boundaries
+            vertices[:, 2] = np.clip(vertices[:, 2], z_min, z_max)
 
-            # Select faces that intersect with the z-range
-            # Include faces that:
-            # 1. Have at least one vertex in the range
-            # 2. Span across the slice (min_z <= z_min and max_z >= z_max)
-            # 3. Intersect the slice boundaries
-            face_z_min = face_z_coords.min(axis=1)
-            face_z_max = face_z_coords.max(axis=1)
+            # Create the sliced mesh
+            sliced_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
 
-            face_intersects = (face_z_max >= z_min) & (face_z_min <= z_max)
+            # Now we need to remove faces that span too large a z-range
+            # This removes faces that were "flattened" by the clipping
+            face_vertices = vertices[faces]
+            face_z_coords = face_vertices[:, :, 2]
+            face_z_spans = face_z_coords.max(axis=1) - face_z_coords.min(axis=1)
 
-            if not face_intersects.any():
+            # Remove faces that span more than the slice width (these are artifacts)
+            slice_width = z_max - z_min
+            valid_face_mask = face_z_spans <= slice_width * 1.1  # Allow 10% tolerance
+
+            if not valid_face_mask.any():
                 return None
 
-            # Select the intersecting faces
-            selected_faces = faces[face_intersects]
-            unique_verts = np.unique(selected_faces.flatten())
+            valid_faces = faces[valid_face_mask]
 
+            # Get unique vertices used by valid faces
+            unique_verts = np.unique(valid_faces.flatten())
             if len(unique_verts) < 3:
                 return None
 
@@ -189,30 +193,39 @@ class MeshSegmenter:
 
             # Remap faces to new vertex indices
             new_faces = []
-            for face in selected_faces:
+            for face in valid_faces:
                 new_face = [old_to_new[v] for v in face]
                 new_faces.append(new_face)
 
-            slice_vertices = vertices[unique_verts]
-            slice_faces = np.array(new_faces)
+            final_vertices = vertices[unique_verts]
+            final_faces = np.array(new_faces)
 
-            # Create the segment mesh
-            segment_mesh = trimesh.Trimesh(vertices=slice_vertices, faces=slice_faces)
+            # Create the final segment mesh
+            segment_mesh = trimesh.Trimesh(vertices=final_vertices, faces=final_faces)
+
+            # Validate the result
+            if segment_mesh is None or segment_mesh.is_empty:
+                return None
+
+            if not hasattr(segment_mesh, "vertices") or len(segment_mesh.vertices) < 3:
+                return None
+
+            # Check that we got a reasonable slice
+            vertex_z_range = segment_mesh.vertices[:, 2]
+            actual_z_min, actual_z_max = vertex_z_range.min(), vertex_z_range.max()
+
+            # The slice should be within our specified bounds
+            if actual_z_min < z_min - 1e-6 or actual_z_max > z_max + 1e-6:
+                warnings.warn(
+                    f"Slice [{z_min:.3f}, {z_max:.3f}] has vertices outside range: [{actual_z_min:.3f}, {actual_z_max:.3f}]"
+                )
 
             # Clean up the mesh
             try:
-                # Use non-deprecated methods
-                if hasattr(segment_mesh, "nondegenerate_faces"):
-                    segment_mesh.update_faces(segment_mesh.nondegenerate_faces())
-                if hasattr(segment_mesh, "unique_faces"):
-                    segment_mesh.update_faces(segment_mesh.unique_faces())
+                segment_mesh.remove_degenerate_faces()
+                segment_mesh.remove_duplicate_faces()
             except:
-                # Fall back to deprecated methods if new ones don't exist
-                try:
-                    segment_mesh.remove_degenerate_faces()
-                    segment_mesh.remove_duplicate_faces()
-                except:
-                    pass  # Continue with uncleaned mesh
+                pass
 
             return segment_mesh
 
@@ -224,6 +237,9 @@ class MeshSegmenter:
         """
         Analyze faces to distinguish exterior vs interior (cut) faces.
 
+        Interior faces are cut faces created during slicing (flat faces at z boundaries).
+        Exterior faces are original mesh surfaces (cylindrical sides, end caps).
+
         Returns:
             Tuple of (exterior_area, interior_area)
         """
@@ -234,25 +250,39 @@ class MeshSegmenter:
         exterior_area = 0.0
         interior_area = 0.0
 
-        tolerance = 1e-3  # Increased tolerance for better detection
+        # Adaptive tolerance based on slice width
+        slice_width = z_max - z_min
+        tolerance = max(1e-3, slice_width * 0.1)  # 10% of slice width or minimum 1e-3
+
+        # Get original mesh bounds to distinguish end caps from cut faces
+        original_z_min, original_z_max = self.original_mesh.bounds[:, 2]
 
         for face_idx, face in enumerate(faces):
             face_verts = vertices[face]
             face_z_coords = face_verts[:, 2]
 
             # Check if face is on a cut plane
-            # A face is on a cut plane if all vertices are very close to z_min or z_max
             z_mean = np.mean(face_z_coords)
             z_std = np.std(face_z_coords)
 
-            # If face is flat (low std) and at boundary, it's likely a cut face
+            # If face is flat (low std) and at boundary, it could be a cut face or end cap
             is_flat = z_std < tolerance
-            at_bottom = abs(z_mean - z_min) < tolerance
-            at_top = abs(z_mean - z_max) < tolerance
+            at_bottom_boundary = abs(z_mean - z_min) < tolerance
+            at_top_boundary = abs(z_mean - z_max) < tolerance
 
-            if is_flat and (at_bottom or at_top):
-                interior_area += face_areas[face_idx]
+            if is_flat and (at_bottom_boundary or at_top_boundary):
+                # Check if this is actually an original mesh end cap or a cut face
+                at_original_bottom = abs(z_mean - original_z_min) < tolerance
+                at_original_top = abs(z_mean - original_z_max) < tolerance
+
+                if at_original_bottom or at_original_top:
+                    # This is an original end cap - counts as exterior
+                    exterior_area += face_areas[face_idx]
+                else:
+                    # This is a cut face - counts as interior
+                    interior_area += face_areas[face_idx]
             else:
+                # Not flat or not at boundary - must be side surface (exterior)
                 exterior_area += face_areas[face_idx]
 
         return exterior_area, interior_area
@@ -598,6 +628,16 @@ class MeshSegmenter:
                 name="Segments",
             )
 
+            # Calculate data bounds for proper zoom
+            x_range = node_positions[:, 0].max() - node_positions[:, 0].min()
+            y_range = node_positions[:, 1].max() - node_positions[:, 1].min()
+            z_range = node_positions[:, 2].max() - node_positions[:, 2].min()
+            max_range = max(x_range, y_range, z_range)
+
+            # Calculate camera distance to fit all data
+            # Use a factor that ensures all points are visible with some margin
+            camera_distance = max(2.0, max_range / 10.0)
+
             # Create figure
             fig = go.Figure(data=[edge_trace, node_trace])
 
@@ -607,7 +647,7 @@ class MeshSegmenter:
                     xaxis_title="X (μm)",
                     yaxis_title="Y (μm)",
                     zaxis_title="Z (μm)",
-                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),
+                    camera=dict(eye=dict(x=camera_distance, y=camera_distance, z=camera_distance)),
                     aspectmode="data",
                 ),
                 showlegend=True,
@@ -695,17 +735,13 @@ class MeshSegmenter:
             cbar = plt.colorbar(scatter, ax=ax, shrink=0.5, aspect=20)
             cbar.set_label("Slice Index")
 
-            # Set equal aspect ratio
-            max_range = (
-                np.array(
-                    [
-                        node_positions[:, 0].max() - node_positions[:, 0].min(),
-                        node_positions[:, 1].max() - node_positions[:, 1].min(),
-                        node_positions[:, 2].max() - node_positions[:, 2].min(),
-                    ]
-                ).max()
-                / 2.0
-            )
+            # Set equal aspect ratio with proper margins
+            x_range = node_positions[:, 0].max() - node_positions[:, 0].min()
+            y_range = node_positions[:, 1].max() - node_positions[:, 1].min()
+            z_range = node_positions[:, 2].max() - node_positions[:, 2].min()
+
+            # Use the largest range and add 20% margin
+            max_range = max(x_range, y_range, z_range) * 0.6  # 0.6 gives 20% margin on each side
 
             mid_x = (node_positions[:, 0].max() + node_positions[:, 0].min()) * 0.5
             mid_y = (node_positions[:, 1].max() + node_positions[:, 1].min()) * 0.5
@@ -829,3 +865,136 @@ class MeshSegmenter:
 
         except Exception:
             return mesh
+
+    def create_neuron_model(self, name: str = "segmented_neuron"):
+        """
+        Convert segmentation results to a Neuron object for simulation.
+
+        Args:
+            name: Name for the neuron model
+
+        Returns:
+            Neuron object with compartments and connectivity
+        """
+        from .core import Neuron, Compartment
+
+        if not self.segments:
+            raise ValueError("No segments found. Run segment_mesh() first.")
+
+        if not hasattr(self, "original_mesh") or self.original_mesh is None:
+            raise ValueError("Original mesh not available. Run segment_mesh() first.")
+
+        neuron = Neuron(name=name)
+        neuron.set_mesh(self.original_mesh)
+
+        # Convert each segment to a compartment
+        for segment in self.segments:
+            # Convert units: trimesh gives µm³, we want µm² for area
+            # Surface area from trimesh is in mesh units² (assume µm²)
+            membrane_area = segment.exterior_surface_area  # µm²
+            volume = segment.volume  # µm³
+
+            compartment = Compartment(
+                id=segment.id,
+                z_level=segment.slice_index,
+                area=membrane_area,
+                volume=volume,
+                centroid=segment.centroid,
+                boundary_points=segment.mesh.vertices,
+                membrane_potential=-70.0,  # Initial resting potential
+            )
+
+            neuron.compartment_graph.add_compartment(compartment)
+
+        # Add connections based on connectivity graph
+        for edge in self.connectivity_graph.edges(data=True):
+            comp1_id, comp2_id = edge[0], edge[1]
+            edge_data = edge[2]
+
+            # Calculate axial conductance between compartments
+            # Using a simple geometric approach based on connection area
+            distance = edge_data.get("distance", 1.0)  # µm
+
+            # Get compartments to estimate connection area
+            comp1 = neuron.get_compartment(comp1_id)
+            comp2 = neuron.get_compartment(comp2_id)
+
+            # Estimate connection area as the smaller of the two interior areas
+            seg1 = self.get_segment_by_id(comp1_id)
+            seg2 = self.get_segment_by_id(comp2_id)
+
+            # Use interior areas if available, otherwise use a fraction of exterior areas
+            int_area1 = (
+                seg1.interior_surface_area if seg1.interior_surface_area > 0 else seg1.exterior_surface_area * 0.1
+            )
+            int_area2 = (
+                seg2.interior_surface_area if seg2.interior_surface_area > 0 else seg2.exterior_surface_area * 0.1
+            )
+            connection_area = min(int_area1, int_area2)  # µm²
+
+            # Calculate axial conductance (mS)
+            # G = (1/R) = (Area / (ρ * L)) where ρ is resistivity
+            resistivity = 100.0  # Ω·cm, typical intracellular resistivity
+            length = max(distance * 1e-4, 1e-6)  # Convert µm to cm, ensure minimum length
+            area_cm2 = max(connection_area * 1e-8, 1e-12)  # Convert µm² to cm², ensure minimum area
+
+            if length > 0 and area_cm2 > 0:
+                conductance = area_cm2 / (resistivity * length) * 1000  # mS
+                # Ensure reasonable conductance range
+                conductance = max(conductance, 1e-6)  # Minimum 1 µS
+                conductance = min(conductance, 1e3)  # Maximum 1 S
+            else:
+                conductance = 1e-3  # Default 1 µS conductance
+
+            neuron.compartment_graph.add_connection(comp1_id, comp2_id, conductance=conductance, area=connection_area)
+
+        return neuron
+
+    def diagnose_face_classification(
+        self, segment_mesh: trimesh.Trimesh, z_min: float, z_max: float, segment_id: str = "unknown"
+    ):
+        """
+        Diagnostic method to understand face classification issues.
+        """
+        face_areas = segment_mesh.area_faces
+        vertices = segment_mesh.vertices
+        faces = segment_mesh.faces
+
+        print(f"Face classification diagnosis for {segment_id}:")
+        print(f"  Slice bounds: [{z_min:.6f}, {z_max:.6f}]")
+        print(f"  Total faces: {len(faces)}")
+        print(f"  Total mesh area: {segment_mesh.area:.6f}")
+
+        tolerance_values = [1e-3, 5e-3, 1e-2, 2e-2, 5e-2]
+
+        for tol in tolerance_values:
+            interior_area = 0.0
+            exterior_area = 0.0
+            bottom_faces = 0
+            top_faces = 0
+            side_faces = 0
+
+            for face_idx, face in enumerate(faces):
+                face_verts = vertices[face]
+                face_z_coords = face_verts[:, 2]
+                z_mean = np.mean(face_z_coords)
+                z_std = np.std(face_z_coords)
+
+                is_flat = z_std < tol
+                at_bottom = abs(z_mean - z_min) < tol
+                at_top = abs(z_mean - z_max) < tol
+
+                if is_flat and at_bottom:
+                    interior_area += face_areas[face_idx]
+                    bottom_faces += 1
+                elif is_flat and at_top:
+                    interior_area += face_areas[face_idx]
+                    top_faces += 1
+                else:
+                    exterior_area += face_areas[face_idx]
+                    side_faces += 1
+
+            print(f"  Tolerance {tol:.3f}: interior={interior_area:.6f}, exterior={exterior_area:.6f}")
+            print(f"    Bottom faces: {bottom_faces}, Top faces: {top_faces}, Side faces: {side_faces}")
+
+        return True

@@ -60,7 +60,7 @@ class CompartmentGraph:
 
     def add_connection(self, comp1_id: str, comp2_id: str, conductance: float, area: float):
         """
-        Add a connection between two compartments.
+        Add a bidirectional connection between two compartments.
 
         Args:
             comp1_id: ID of first compartment
@@ -68,7 +68,9 @@ class CompartmentGraph:
             conductance: Axial conductance between compartments (mS)
             area: Cross-sectional area of connection (µm²)
         """
+        # Add bidirectional edges for electrical connectivity
         self.graph.add_edge(comp1_id, comp2_id, conductance=conductance, area=area)
+        self.graph.add_edge(comp2_id, comp1_id, conductance=conductance, area=area)
 
     def get_neighbors(self, comp_id: str) -> List[str]:
         """Get neighboring compartment IDs."""
