@@ -6,8 +6,8 @@ using mesh-based geometric approaches rather than traditional SWC cylinder model
 """
 
 __version__ = "0.1.0"
-__author__ = "Jordan Fox"
-__email__ = "jmrfox@example.com"
+__author__ = "Jordan M. R. Fox"
+__email__ = "jordanmrfox@gmail.com"
 
 from .core import Neuron, Compartment, CompartmentGraph
 
