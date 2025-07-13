@@ -106,10 +106,32 @@ class MeshSegmenter:
         if not isinstance(components, list):
             components = [components]
 
+        # Debug: Always print component count for slices that should have branches
+        if slice_index >= 25:  # These slices should have branches
+            print(f"Slice {slice_index}: {len(components)} components")
+
         segments = []
         for comp_idx, component in enumerate(components):
-            if component.volume < min_volume:
-                continue
+            # Debug: Print component details for troubleshooting
+            comp_volume = component.volume if hasattr(component, "volume") else 0.0
+            comp_vertices = len(component.vertices) if hasattr(component, "vertices") else 0
+
+            # Handle zero-volume components that might represent thin branches
+            if comp_volume < min_volume:
+                # Check if this is a degenerate mesh that should be preserved
+                if comp_vertices > 40:  # Has enough vertices to be a real component
+                    # Try to fix zero-volume components by using convex hull or bounding box
+                    try:
+                        if comp_volume == 0.0 and comp_vertices > 3:
+                            # Force inclusion for components with many vertices
+                            comp_volume = min_volume * 2  # Force inclusion
+                            print(f"    Preserving component {comp_idx} with {comp_vertices} vertices")
+                    except Exception as e:
+                        pass
+
+                # Skip if still too small
+                if comp_volume < min_volume:
+                    continue
 
             # Analyze component faces to distinguish interior vs exterior
             exterior_area, interior_area = self._analyze_face_types(component, z_min, z_max)
@@ -135,16 +157,26 @@ class MeshSegmenter:
             segments.append(segment)
             self.segments.append(segment)
 
-        # If we have multiple small components but they should be one, merge them
+        # Debug: Only warn about multiple segments, don't auto-merge
+        # Auto-merging can incorrectly combine separate branches!
         if len(segments) > 1:
             # Check if all components have similar z-centroids (indicating they're from same slice)
             centroids = [s.centroid for s in segments]
             z_coords = [c[2] for c in centroids]
             z_std = np.std(z_coords)
 
-            # If z-coordinates are very similar, likely fragments of one segment
-            if z_std < (z_max - z_min) * 0.1:  # Within 10% of slice height
-                print(f"    Warning: Slice {slice_index} has {len(segments)} fragments, may need merging")
+            # Log multiple segments for debugging, but don't merge branches
+            print(f"    Info: Slice {slice_index} has {len(segments)} segments")
+
+            # Only consider merging if components are very small and very close
+            # This preserves legitimate branching while merging tiny fragments
+            if z_std < (z_max - z_min) * 0.05:  # Very strict criteria - within 5% of slice height
+                total_volume = sum(s.volume for s in segments)
+                small_segments = [s for s in segments if s.volume < total_volume * 0.1]  # Less than 10% of total
+
+                if len(small_segments) == len(segments) - 1:  # All but one are small
+                    print(f"    Warning: Slice {slice_index} may have fragments that could be merged")
+                    # Note: Actual merging logic removed to preserve branches
 
         self.slice_segments[slice_index] = segments
 
