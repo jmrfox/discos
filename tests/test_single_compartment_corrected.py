@@ -166,8 +166,12 @@ def test_single_compartment_corrected():
 
             plt.tight_layout()
 
-            # Save plot
-            plot_filename = "single_compartment_corrected_simulation.png"
+            # Save plot to tests/output directory
+            import os
+
+            output_dir = os.path.join(os.path.dirname(__file__), "output")
+            os.makedirs(output_dir, exist_ok=True)
+            plot_filename = os.path.join(output_dir, "single_compartment_corrected_simulation.png")
             plt.savefig(plot_filename, dpi=300, bbox_inches="tight")
             print(f"Plot saved to: {plot_filename}")
         except Exception as e:

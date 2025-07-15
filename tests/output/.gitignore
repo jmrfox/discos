@@ -1,0 +1,3 @@
+# Test output plots - generated during testing
+# Keep the directory but ignore the actual plot files
+*.png

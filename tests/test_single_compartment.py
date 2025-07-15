@@ -198,8 +198,9 @@ def test_single_compartment_cylinder(plot_graph: bool = True, show_plot: bool = 
         print(f"\n📊 Generating connectivity graph plot...")
 
         try:
-            save_path = os.path.join(os.path.dirname(__file__), "data", "single_compartment_connectivity_graph.png")
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            output_dir = os.path.join(os.path.dirname(__file__), "output")
+            os.makedirs(output_dir, exist_ok=True)
+            save_path = os.path.join(output_dir, "single_compartment_connectivity_graph.png")
 
             segmenter.visualize_connectivity_graph(
                 save_path=save_path, show_plot=show_plot, include_3d_view=False, figsize=(8, 6)

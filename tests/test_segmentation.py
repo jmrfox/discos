@@ -198,8 +198,13 @@ def test_cylinder_segmentation(plot_graph: bool = False, show_plot: bool = True,
     # Plot connectivity graph if requested
     if plot_graph:
         print(f"\n📊 Generating connectivity graph visualization...")
+        import os
+
+        output_dir = os.path.join(os.path.dirname(__file__), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        save_path = os.path.join(output_dir, "cylinder_connectivity_graph.png")
         graph_path = segmenter.visualize_connectivity_graph(
-            save_path="tests/data/cylinder_connectivity_graph.png", show_plot=show_plot, include_3d_view=include_3d_view
+            save_path=save_path, show_plot=show_plot, include_3d_view=include_3d_view
         )
         if graph_path:
             print(f"  Connectivity graph saved to: {graph_path}")
@@ -333,8 +338,13 @@ def test_torus_segmentation(plot_graph: bool = False, show_plot: bool = True, in
     # Plot connectivity graph if requested
     if plot_graph:
         print(f"\n📊 Generating connectivity graph visualization...")
+        import os
+
+        output_dir = os.path.join(os.path.dirname(__file__), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        save_path = os.path.join(output_dir, "torus_connectivity_graph.png")
         graph_path = segmenter.visualize_connectivity_graph(
-            save_path="tests/data/torus_connectivity_graph.png", show_plot=show_plot, include_3d_view=include_3d_view
+            save_path=save_path, show_plot=show_plot, include_3d_view=include_3d_view
         )
         if graph_path:
             print(f"  Connectivity graph saved to: {graph_path}")
@@ -502,8 +512,13 @@ def test_neuron_segmentation(plot_graph: bool = False, show_plot: bool = True, i
     # Plot connectivity graph if requested
     if plot_graph:
         print(f"\n📊 Generating connectivity graph visualization...")
+        import os
+
+        output_dir = os.path.join(os.path.dirname(__file__), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        save_path = os.path.join(output_dir, "neuron_connectivity_graph.png")
         graph_path = segmenter.visualize_connectivity_graph(
-            save_path="tests/data/neuron_connectivity_graph.png", show_plot=show_plot, include_3d_view=include_3d_view
+            save_path=save_path, show_plot=show_plot, include_3d_view=include_3d_view
         )
         if graph_path:
             print(f"  Connectivity graph saved to: {graph_path}")

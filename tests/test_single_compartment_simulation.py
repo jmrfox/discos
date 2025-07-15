@@ -227,8 +227,10 @@ def plot_simulation_results(results, compartment_id):
 
     plt.tight_layout()
 
-    # Save plot
-    save_path = os.path.join(os.path.dirname(__file__), "single_compartment_simulation.png")
+    # Save plot to tests/output directory
+    output_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, "single_compartment_simulation.png")
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"Plot saved to: {save_path}")
 
