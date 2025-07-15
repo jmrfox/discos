@@ -11,13 +11,15 @@ __email__ = "jordanmrfox@gmail.com"
 
 from .core import Neuron, Compartment, CompartmentGraph
 
-# Mesh functions from mesh module (primary 3D representation)
+# Mesh functions from mesh submodule (primary 3D representation)
 from .mesh import (
     MeshProcessor,
+    MeshSegmenter,
     visualize_mesh_3d,
     analyze_mesh,
+    repair_mesh,
+    preprocess_mesh,
     visualize_mesh_slice_interactive,
-    visualize_mesh_slice_grid,
 )
 
 # Demo mesh functions from demos module
@@ -32,7 +34,6 @@ from .demos import (
 # Core modules and functionality
 # Note: slicer, regions, and graph modules moved to dev_storage/old_modules
 # The current approach uses MeshSegmenter for 3D mesh segmentation
-from .segmentation import MeshSegmenter, Segment
 from .ode import ODESystem
 from .simulation import Simulator
 
@@ -43,10 +44,12 @@ __all__ = [
     "CompartmentGraph",
     # Mesh processing (primary 3D representation)
     "MeshProcessor",
+    "MeshSegmenter",
     "visualize_mesh_3d",
     "analyze_mesh",
+    "repair_mesh",
+    "preprocess_mesh",
     "visualize_mesh_slice_interactive",
-    "visualize_mesh_slice_grid",
     # Demo mesh functions
     "create_cylinder_mesh",
     "create_torus_mesh",

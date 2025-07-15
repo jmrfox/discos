@@ -939,5 +939,3 @@ def repair_mesh(
 
     return mesh
 
-
-# ...existing code...
