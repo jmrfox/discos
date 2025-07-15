@@ -73,17 +73,25 @@ class ODESystem:
 
         self.stimuli.append(stimulus)
 
-    def get_initial_conditions(self) -> np.ndarray:
+    def get_initial_conditions(self, verbose: bool = False) -> np.ndarray:
         """Get initial conditions for the ODE system."""
+        if verbose:
+            print("   Computing initial conditions...")
+
         y0 = np.zeros(self.state_size)
 
         # Set initial voltages
         for i, comp_id in enumerate(self.compartment_ids):
             compartment = self.neuron.get_compartment(comp_id)
             y0[i] = compartment.membrane_potential
+            if verbose:
+                print(f"     Compartment {comp_id}: V₀ = {compartment.membrane_potential:.1f} mV")
 
         # Set initial gating variables (steady-state at rest)
         v_rest = -65.0  # mV
+        if verbose:
+            print(f"     Computing gating variables at V_rest = {v_rest} mV")
+
         for i in range(self.num_compartments):
             voltage_idx = i
             gating_start_idx = self.num_compartments + 3 * i
@@ -96,6 +104,13 @@ class ODESystem:
             y0[gating_start_idx] = m_inf  # m
             y0[gating_start_idx + 1] = h_inf  # h
             y0[gating_start_idx + 2] = n_inf  # n
+
+            if verbose:
+                comp_id = self.compartment_ids[i]
+                print(f"     Compartment {comp_id}: m₀={m_inf:.3f}, h₀={h_inf:.3f}, n₀={n_inf:.3f}")
+
+        if verbose:
+            print(f"   Initial state vector shape: {y0.shape}")
 
         return y0
 
@@ -112,9 +127,19 @@ class ODESystem:
         """
         dydt = np.zeros_like(y)
 
+        # Check for numerical issues
+        if np.any(np.isnan(y)) or np.any(np.isinf(y)):
+            print(f"⚠️  WARNING: NaN or Inf detected in state at t={t:.3f}")
+            print(f"   State: {y}")
+            return dydt  # Return zeros to avoid propagating NaN/Inf
+
         # Extract voltages and gating variables
         voltages = y[: self.num_compartments]
         gating_vars = y[self.num_compartments :].reshape(self.num_compartments, 3)
+
+        # Check for extreme voltages that might cause numerical issues
+        if np.any(np.abs(voltages) > 200):  # More than ±200 mV
+            print(f"⚠️  WARNING: Extreme voltage detected at t={t:.3f}: {voltages}")
 
         # Compute voltage derivatives (cable equation)
         for i, comp_id in enumerate(self.compartment_ids):
@@ -124,27 +149,70 @@ class ODESystem:
             V = voltages[i]
             m, h, n = gating_vars[i]
 
-            # Ionic currents (Hodgkin-Huxley)
-            I_Na = self._sodium_current(V, m, h, compartment.area)
-            I_K = self._potassium_current(V, n, compartment.area)
-            I_leak = self._leak_current(V, compartment.area)
-            I_ion = I_Na + I_K + I_leak
+            # Check gating variable bounds
+            if not (0 <= m <= 1 and 0 <= h <= 1 and 0 <= n <= 1):
+                print(f"⚠️  WARNING: Gating variables out of bounds at t={t:.3f}")
+                print(f"   Compartment {comp_id}: m={m:.3f}, h={h:.3f}, n={n:.3f}")
+                # Clip to valid range
+                m = np.clip(m, 0, 1)
+                h = np.clip(h, 0, 1)
+                n = np.clip(n, 0, 1)
 
-            # Axial currents from neighboring compartments
-            I_axial = 0.0
-            neighbors = self.neuron.compartment_graph.get_neighbors(comp_id)
-            for neighbor_id in neighbors:
-                neighbor_idx = self.id_to_index[neighbor_id]
-                V_neighbor = voltages[neighbor_idx]
-                conductance = self.neuron.compartment_graph.get_connection_conductance(comp_id, neighbor_id)
-                I_axial += conductance * (V_neighbor - V)
+            try:
+                # Ionic currents (Hodgkin-Huxley)
+                I_Na = self._sodium_current(V, m, h, compartment.area)
+                I_K = self._potassium_current(V, n, compartment.area)
+                I_leak = self._leak_current(V, compartment.area)
+                I_ion = I_Na + I_K + I_leak
 
-            # Applied stimulus
-            I_stim = self._get_stimulus_current(t, comp_id)
+                # Check for extreme currents
+                if abs(I_ion) > 1e6:  # More than 1 nA
+                    print(f"⚠️  WARNING: Large ionic current at t={t:.3f}: {I_ion:.2e} pA")
 
-            # Membrane equation: C_m * dV/dt = -I_ion + I_axial + I_stim
-            capacitance = self.default_params["capacitance"] * compartment.area * 1e-8  # µF
-            dydt[i] = (-I_ion + I_axial + I_stim) / capacitance
+                # Axial currents from neighboring compartments
+                I_axial = 0.0
+                neighbors = self.neuron.compartment_graph.get_neighbors(comp_id)
+                for neighbor_id in neighbors:
+                    neighbor_idx = self.id_to_index[neighbor_id]
+                    V_neighbor = voltages[neighbor_idx]
+                    conductance = self.neuron.compartment_graph.get_connection_conductance(comp_id, neighbor_id)
+                    # Convert conductance to appropriate units if needed
+                    I_axial += (
+                        conductance * (V_neighbor - V) * 1000
+                    )  # Assume conductance gives nA, convert to pA                # Applied stimulus
+                I_stim = self._get_stimulus_current(t, comp_id)
+
+                # Membrane equation: C_m * dV/dt = -I_ion + I_axial + I_stim
+                # Units: area (μm²), capacitance (μF/cm²)
+                # Convert area to cm²: μm² × 1e-8
+                # Convert capacitance: μF/cm² × cm² = μF = 1e-6 F
+                # Final capacitance in pF: μF × 1e6 = pF
+                capacitance = self.default_params["capacitance"] * compartment.area * 1e-2  # pF
+
+                if capacitance <= 0:
+                    print(f"⚠️  WARNING: Zero or negative capacitance for compartment {comp_id}")
+                    capacitance = 1.0  # Minimum capacitance in pF
+
+                # I_total in pA, capacitance in pF, dV/dt in mV/ms
+                I_total = -I_ion + I_axial + I_stim
+                dVdt = I_total / capacitance  # mV/ms
+
+                # Check for unrealistic membrane voltages (not derivatives - those can be large!)
+                if abs(V) > 1000:  # More than ±1000 mV is unrealistic
+                    print(f"⚠️  WARNING: Extreme membrane voltage at t={t:.3f}: V={V:.1f} mV")
+                    print(f"   I_total={I_total:.2e} pA, C={capacitance:.2e} pF")
+
+                # For debugging: show voltage info only if both derivative AND voltage are concerning
+                if abs(dVdt) > 10000 and abs(V) > 200:  # Only warn if both derivative AND voltage are large
+                    print(
+                        f"🔍 DEBUG: Large derivative with high voltage at t={t:.3f}: dV/dt={dVdt:.1e} mV/ms, V={V:.1f} mV"
+                    )
+
+                dydt[i] = dVdt
+
+            except Exception as e:
+                print(f"❌ ERROR in voltage calculation for compartment {comp_id} at t={t:.3f}: {e}")
+                dydt[i] = 0.0
 
         # Compute gating variable derivatives
         for i in range(self.num_compartments):
@@ -153,46 +221,82 @@ class ODESystem:
 
             gating_start_idx = self.num_compartments + 3 * i
 
-            # Sodium activation (m)
-            dydt[gating_start_idx] = (self._m_inf(V) - m) / self._tau_m(V)
+            try:
+                # Sodium activation (m)
+                tau_m = self._tau_m(V)
+                if tau_m > 0:
+                    dydt[gating_start_idx] = (self._m_inf(V) - m) / tau_m
+                else:
+                    dydt[gating_start_idx] = 0.0
 
-            # Sodium inactivation (h)
-            dydt[gating_start_idx + 1] = (self._h_inf(V) - h) / self._tau_h(V)
+                # Sodium inactivation (h)
+                tau_h = self._tau_h(V)
+                if tau_h > 0:
+                    dydt[gating_start_idx + 1] = (self._h_inf(V) - h) / tau_h
+                else:
+                    dydt[gating_start_idx + 1] = 0.0
 
-            # Potassium activation (n)
-            dydt[gating_start_idx + 2] = (self._n_inf(V) - n) / self._tau_n(V)
+                # Potassium activation (n)
+                tau_n = self._tau_n(V)
+                if tau_n > 0:
+                    dydt[gating_start_idx + 2] = (self._n_inf(V) - n) / tau_n
+                else:
+                    dydt[gating_start_idx + 2] = 0.0
+
+            except Exception as e:
+                print(f"❌ ERROR in gating variable calculation for compartment {i} at t={t:.3f}: {e}")
+                dydt[gating_start_idx] = 0.0
+                dydt[gating_start_idx + 1] = 0.0
+                dydt[gating_start_idx + 2] = 0.0
+
+        # Final check for numerical issues in derivatives
+        if np.any(np.isnan(dydt)) or np.any(np.isinf(dydt)):
+            print(f"❌ ERROR: NaN or Inf in derivatives at t={t:.3f}")
+            print(f"   Derivatives: {dydt}")
+            dydt = np.zeros_like(dydt)  # Return zeros to avoid propagating NaN/Inf
 
         return dydt
 
     def _sodium_current(self, V: float, m: float, h: float, area: float) -> float:
-        """Sodium current (nA)."""
+        """Sodium current (pA)."""
+        # area is in μm², conductance in S/cm²
+        # Convert: μm² to cm² (×1e-8), then to pA (×1e12)
         g_Na = self.default_params["na_conductance"] * area * 1e-8  # S
         E_Na = self.default_params["na_reversal"]
-        return g_Na * m**3 * h * (V - E_Na) * 1e9  # nA
+        return g_Na * m**3 * h * (V - E_Na) * 1e12  # pA
 
     def _potassium_current(self, V: float, n: float, area: float) -> float:
-        """Potassium current (nA)."""
+        """Potassium current (pA)."""
         g_K = self.default_params["k_conductance"] * area * 1e-8  # S
         E_K = self.default_params["k_reversal"]
-        return g_K * n**4 * (V - E_K) * 1e9  # nA
+        return g_K * n**4 * (V - E_K) * 1e12  # pA
 
     def _leak_current(self, V: float, area: float) -> float:
-        """Leak current (nA)."""
+        """Leak current (pA)."""
         g_leak = self.default_params["leak_conductance"] * area * 1e-8  # S
         E_leak = self.default_params["leak_reversal"]
-        return g_leak * (V - E_leak) * 1e9  # nA
+        return g_leak * (V - E_leak) * 1e12  # pA
 
     def _get_stimulus_current(self, t: float, compartment_id: str) -> float:
-        """Get stimulus current for a compartment at time t."""
+        """Get stimulus current for a compartment at time t (pA)."""
         I_stim = 0.0
 
         for stimulus in self.stimuli:
+            # Check for None values and ensure proper types
+            start_time = stimulus.get("start_time", 0.0)
+            end_time = stimulus.get("end_time", 0.0)
+            amplitude = stimulus.get("amplitude", 0.0)
+            stim_type = stimulus.get("type", "current")
+
             if (
                 stimulus["compartment_id"] == compartment_id
-                and stimulus["start_time"] <= t <= stimulus["end_time"]
-                and stimulus["type"] == "current"
+                and start_time is not None
+                and end_time is not None
+                and start_time <= t <= end_time
+                and stim_type == "current"
             ):
-                I_stim += stimulus["amplitude"]
+                # Convert stimulus from nA to pA
+                I_stim += amplitude * 1000  # nA to pA
 
         return I_stim
 
@@ -273,21 +377,40 @@ class ODESystem:
         """Validate the ODE system setup."""
         issues = {"errors": [], "warnings": []}
 
-        # Check for compartments without connections
-        isolated_comps = []
-        for comp_id in self.compartment_ids:
-            neighbors = self.neuron.compartment_graph.get_neighbors(comp_id)
-            if not neighbors:
-                isolated_comps.append(comp_id)
+        # Check graph connectivity
+        if self.num_compartments == 0:
+            issues["errors"].append("No compartments found in the neuron")
+        elif self.num_compartments == 1:
+            # Single compartment is valid (simplest case)
+            pass
+        else:
+            # For multi-compartment systems, check connectivity
+            import networkx as nx
 
-        if isolated_comps:
-            issues["warnings"].append(f"Found {len(isolated_comps)} isolated compartments")
+            # Create a networkx graph from the compartment graph
+            G = nx.Graph()
+            G.add_nodes_from(self.compartment_ids)
+
+            # Add edges
+            for comp_id in self.compartment_ids:
+                neighbors = self.neuron.compartment_graph.get_neighbors(comp_id)
+                for neighbor_id in neighbors:
+                    G.add_edge(comp_id, neighbor_id)
+
+            # Check if graph is connected
+            if not nx.is_connected(G):
+                num_components = nx.number_connected_components(G)
+                components = list(nx.connected_components(G))
+                issues["errors"].append(
+                    f"Graph has {num_components} disconnected components. "
+                    f"All compartments must be connected. Components: {[list(comp) for comp in components]}"
+                )
 
         # Check for very small compartments
         small_comps = []
         for comp_id in self.compartment_ids:
             comp = self.neuron.get_compartment(comp_id)
-            if comp.area < 0.01:  # µm²
+            if comp is not None and comp.area < 0.01:  # µm²
                 small_comps.append(comp_id)
 
         if small_comps:

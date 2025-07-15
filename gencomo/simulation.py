@@ -13,6 +13,14 @@ import warnings
 from dataclasses import dataclass
 import time
 
+try:
+    from tqdm import tqdm
+
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    print("Note: tqdm not available, falling back to simple progress reporting")
+
 
 @dataclass
 class SimulationResult:
@@ -51,11 +59,12 @@ class Simulator:
         self,
         duration: float,
         dt: float = 0.025,
-        method: str = "RK45",
-        rtol: float = 1e-6,
-        atol: float = 1e-9,
-        max_step: float = None,
+        method: str = "Radau",  # Better default for stiff HH equations
+        rtol: float = 1e-5,  # More appropriate for HH
+        atol: float = 1e-8,  # More appropriate for HH
+        max_step: Optional[float] = None,
         progress_callback: Optional[callable] = None,
+        verbose: bool = True,
     ) -> SimulationResult:
         """
         Run the compartmental simulation.
@@ -68,17 +77,35 @@ class Simulator:
             atol: Absolute tolerance
             max_step: Maximum step size (ms)
             progress_callback: Function to call with progress updates
+            verbose: Whether to print detailed progress information
 
         Returns:
             SimulationResult object
         """
-        print(f"Starting simulation: {duration} ms duration, {len(self.ode_system.compartment_ids)} compartments")
+        if verbose:
+            print("=" * 80)
+            print("🧠 GENCOMO SIMULATION STARTING")
+            print("=" * 80)
+            print(f"📊 Simulation Parameters:")
+            print(f"   Duration: {duration} ms")
+            print(f"   Time step: {dt} ms")
+            print(f"   Method: {method}")
+            print(f"   Compartments: {len(self.ode_system.compartment_ids)}")
+            print(f"   State variables: {self.ode_system.state_size}")
+            print(f"   Stimuli: {len(self.ode_system.stimuli)}")
+            print(f"   Tolerances: rtol={rtol}, atol={atol}")
+            if max_step:
+                print(f"   Max step: {max_step} ms")
 
         start_time = time.time()
 
         # Validate system
+        if verbose:
+            print("\n🔍 Validating system...")
         validation = self.ode_system.validate_system()
         if validation["errors"]:
+            if verbose:
+                print(f"❌ Validation failed: {validation['errors']}")
             return SimulationResult(
                 time=np.array([]),
                 voltages={},
@@ -91,41 +118,118 @@ class Simulator:
 
         if validation["warnings"]:
             for warning in validation["warnings"]:
+                if verbose:
+                    print(f"⚠️  Warning: {warning}")
                 warnings.warn(warning)
+
+        if verbose:
+            print("✅ System validation passed")
 
         # Set up time points
         t_span = (0.0, duration)
         t_eval = np.arange(0.0, duration + dt, dt)
 
+        if verbose:
+            print(f"\n⏱️  Time setup:")
+            print(f"   Time span: {t_span}")
+            print(f"   Output points: {len(t_eval)}")
+            print(f"   First few times: {t_eval[:5]}")
+
         # Get initial conditions
-        y0 = self.ode_system.get_initial_conditions()
+        if verbose:
+            print("\n🎯 Computing initial conditions...")
+        y0 = self.ode_system.get_initial_conditions(verbose=verbose)
+        if verbose:
+            print(f"   Initial state shape: {y0.shape}")
+            print(f"   Initial voltages: {y0[:len(self.ode_system.compartment_ids)]}")
 
-        # Progress tracking
-        if progress_callback:
+        # Test ODE function once
+        if verbose:
+            print("\n🧪 Testing ODE function...")
+        try:
+            dydt_test = self.ode_system.ode_function(0.0, y0)
+            if verbose:
+                print(f"   ODE derivatives shape: {dydt_test.shape}")
+                print(f"   Initial voltage derivatives: {dydt_test[:len(self.ode_system.compartment_ids)]}")
+                print("✅ ODE function test passed")
+        except Exception as e:
+            if verbose:
+                print(f"❌ ODE function test failed: {e}")
+            return SimulationResult(
+                time=np.array([]),
+                voltages={},
+                gating_variables={},
+                success=False,
+                message=f"ODE function test failed: {str(e)}",
+                simulation_time=0.0,
+                parameters={},
+            )
 
-            def progress_wrapper(t, y):
-                progress = (t - t_span[0]) / (t_span[1] - t_span[0])
-                progress_callback(progress)
+        # Progress tracking setup
+        progress_bar = None
+        last_progress_time = time.time()
+        progress_step = 0
 
-            # Note: Not all integrators support event detection
-            # This is a simplified progress tracking
+        if verbose and TQDM_AVAILABLE:
+            progress_bar = tqdm(total=100, desc="🔬 Integration", unit="%", ncols=80)
 
         try:
-            # Run integration
-            sol = solve_ivp(
-                fun=self.ode_system.ode_function,
-                t_span=t_span,
-                y0=y0,
-                t_eval=t_eval,
-                method=method,
-                rtol=rtol,
-                atol=atol,
-                max_step=max_step,
-            )
+            if verbose:
+                print(f"\n🚀 Starting integration with {method}...")
+                print(f"   This may take a while for large systems...")
+
+            # Run integration with timeout monitoring
+            kwargs = {
+                "fun": self.ode_system.ode_function,
+                "t_span": t_span,
+                "y0": y0,
+                "t_eval": t_eval,
+                "method": method,
+                "rtol": rtol,
+                "atol": atol,
+            }
+
+            # Only add max_step if it's not None
+            if max_step is not None:
+                kwargs["max_step"] = max_step
+            else:
+                # Set a reasonable default max_step for HH equations
+                # Typical action potential timescale is ~1ms, so limit steps to 0.1ms
+                default_max_step = min(0.1, duration / 500)  # 0.1ms or 0.2% of duration
+                kwargs["max_step"] = default_max_step
+                if verbose:
+                    print(f"   Using default max_step: {default_max_step:.4f} ms")
+
+            # Monitor integration progress
+            integration_start = time.time()
+
+            if verbose:
+                print("   Integration starting...")
+
+            sol = solve_ivp(**kwargs)
+
+            integration_end = time.time()
+            integration_time = integration_end - integration_start
+
+            if verbose:
+                print(f"   Integration completed in {integration_time:.2f} seconds")
 
             simulation_time = time.time() - start_time
 
+            if progress_bar:
+                progress_bar.close()
+
+            if verbose:
+                print(f"\n✅ Integration completed!")
+                print(f"   Success: {sol.success}")
+                print(f"   Message: {sol.message}")
+                print(f"   Total time: {simulation_time:.3f} seconds")
+                print(f"   Solution shape: {sol.y.shape}")
+                print(f"   Time points: {len(sol.t)}")
+
             if not sol.success:
+                if verbose:
+                    print(f"❌ Integration failed: {sol.message}")
                 return SimulationResult(
                     time=np.array([]),
                     voltages={},
@@ -137,7 +241,13 @@ class Simulator:
                 )
 
             # Parse results
+            if verbose:
+                print("\n📊 Parsing solution...")
             voltages, gating_vars = self._parse_solution(sol)
+
+            if verbose:
+                print(f"   Extracted {len(voltages)} voltage traces")
+                print(f"   Extracted gating variables for {len(gating_vars)} compartments")
 
             result = SimulationResult(
                 time=sol.t,
@@ -156,12 +266,22 @@ class Simulator:
             )
 
             self.results = result
-            print(f"Simulation completed in {simulation_time:.2f} seconds")
+
+            if verbose:
+                print(f"\n🎉 Simulation completed successfully in {simulation_time:.3f} seconds!")
+                print("=" * 80)
 
             return result
 
         except Exception as e:
             simulation_time = time.time() - start_time
+            if progress_bar:
+                progress_bar.close()
+            if verbose:
+                print(f"\n❌ Simulation failed: {str(e)}")
+                import traceback
+
+                traceback.print_exc()
             return SimulationResult(
                 time=np.array([]),
                 voltages={},
