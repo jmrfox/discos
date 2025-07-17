@@ -394,7 +394,7 @@ If you use GenCoMo in your research, please cite:
 
 **Recommended Setup:**
 - **OS**: Windows 11
-- **Shell**: PowerShell 5.1 
+- **Shell**: PowerShell 5.1
 - **Python Package Manager**: [uv](https://github.com/astral-sh/uv) (fast Python package manager)
 - **Python Version**: 3.8+
 
