@@ -5,7 +5,7 @@ This simulates what would happen if there was a bug in the segmentation algorith
 """
 
 import networkx as nx
-from gencomo.segmentation import MeshSegmenter
+from gencomo.mesh import MeshSegmenter
 
 
 def test_disconnected_graph_detection():

@@ -389,3 +389,41 @@ If you use GenCoMo in your research, please cite:
 - **Documentation**: [GitHub Wiki](https://github.com/jmrfox/gencomo/wiki)
 - **Issues**: [GitHub Issues](https://github.com/jmrfox/gencomo/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/jmrfox/gencomo/discussions)
+
+## Development Environment
+
+**Recommended Setup:**
+- **OS**: Windows 11
+- **Shell**: PowerShell 5.1 
+- **Python Package Manager**: [uv](https://github.com/astral-sh/uv) (fast Python package manager)
+- **Python Version**: 3.8+
+
+**Installation with uv:**
+```bash
+# Install uv first if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh  # Unix/macOS
+# or
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"  # Windows
+
+# Clone and install GenCoMo
+git clone https://github.com/jmrfox/gencomo.git
+cd gencomo
+uv sync  # Install dependencies and create virtual environment
+```
+
+**Usage with uv:**
+```bash
+# Run Python scripts
+uv run python your_script.py
+
+# Run notebooks
+uv run jupyter lab
+
+# Run tests
+uv run pytest
+
+# Add new dependencies
+uv add package-name
+```
+
+## Key Features

@@ -20,6 +20,7 @@ from .mesh import (
     repair_mesh,
     preprocess_mesh,
     visualize_mesh_slice_interactive,
+    visualize_mesh_slice_grid,
 )
 
 # Demo mesh functions from demos module
@@ -50,6 +51,7 @@ __all__ = [
     "repair_mesh",
     "preprocess_mesh",
     "visualize_mesh_slice_interactive",
+    "visualize_mesh_slice_grid",
     # Demo mesh functions
     "create_cylinder_mesh",
     "create_torus_mesh",

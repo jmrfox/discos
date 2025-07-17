@@ -16,6 +16,7 @@ from .utils import (
     preprocess_mesh,
     visualize_mesh_3d,
     visualize_mesh_slice_interactive,
+    visualize_mesh_slice_grid,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "preprocess_mesh",
     "visualize_mesh_3d",
     "visualize_mesh_slice_interactive",
+    "visualize_mesh_slice_grid",
 ]
