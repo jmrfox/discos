@@ -176,7 +176,7 @@ GenCoMo uses consistent units throughout the modeling pipeline. Understanding th
 - **Frequency**: Hz (hertz) for oscillatory phenomena
 
 ### Biophysical Constants
-- **Temperature**: °C (degrees Celsius) for temperature-dependent kinetics
+- **Temperature**: K (Kelvin) for temperature-dependent kinetics
 - **Concentration**: mM (millimolar) for ionic concentrations (when used)
 
 ### Fundamental Physics Equations
@@ -238,7 +238,7 @@ simulator.set_biophysics(
     na_conductance=0.12,    # S/cm² (sodium channel density)
     k_conductance=0.036,    # S/cm² (potassium channel density)
     leak_conductance=0.0003, # S/cm² (leak conductance)
-    temperature=6.3         # °C (experimental temperature)
+    temperature=279.45      # K (experimental temperature)
 )
 
 simulator.add_stimulus(
@@ -315,7 +315,7 @@ simulator.add_stimulus(
 **Biophysics**:
 - `capacitance` - Membrane capacitance (µF/cm²)
 - `na_conductance`, `k_conductance` - Ionic conductances (S/cm²)
-- `temperature` - Temperature for rate constants (°C)
+- `temperature` - Temperature for rate constants (K)
 
 ## Testing
 

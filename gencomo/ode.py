@@ -25,7 +25,7 @@ class ODESystem:
 
         # Default biophysical parameters
         self.default_params = {
-            "temperature": 6.3,  # °C
+            "temperature": 279.45,  # K (6.3°C + 273.15)
             "capacitance": 1.0,  # µF/cm²
             "leak_conductance": 0.0003,  # S/cm²
             "leak_reversal": -54.3,  # mV
@@ -303,32 +303,32 @@ class ODESystem:
     # Hodgkin-Huxley gating variables (temperature-corrected)
     def _alpha_m(self, V: float) -> float:
         """Sodium activation rate constant."""
-        temp_factor = 3.0 ** ((self.default_params["temperature"] - 6.3) / 10.0)
+        temp_factor = 3.0 ** ((self.default_params["temperature"] - 279.45) / 10.0)
         return temp_factor * 0.1 * (V + 40.0) / (1.0 - np.exp(-(V + 40.0) / 10.0))
 
     def _beta_m(self, V: float) -> float:
         """Sodium activation rate constant."""
-        temp_factor = 3.0 ** ((self.default_params["temperature"] - 6.3) / 10.0)
+        temp_factor = 3.0 ** ((self.default_params["temperature"] - 279.45) / 10.0)
         return temp_factor * 4.0 * np.exp(-(V + 65.0) / 18.0)
 
     def _alpha_h(self, V: float) -> float:
         """Sodium inactivation rate constant."""
-        temp_factor = 3.0 ** ((self.default_params["temperature"] - 6.3) / 10.0)
+        temp_factor = 3.0 ** ((self.default_params["temperature"] - 279.45) / 10.0)
         return temp_factor * 0.07 * np.exp(-(V + 65.0) / 20.0)
 
     def _beta_h(self, V: float) -> float:
         """Sodium inactivation rate constant."""
-        temp_factor = 3.0 ** ((self.default_params["temperature"] - 6.3) / 10.0)
+        temp_factor = 3.0 ** ((self.default_params["temperature"] - 279.45) / 10.0)
         return temp_factor * 1.0 / (1.0 + np.exp(-(V + 35.0) / 10.0))
 
     def _alpha_n(self, V: float) -> float:
         """Potassium activation rate constant."""
-        temp_factor = 3.0 ** ((self.default_params["temperature"] - 6.3) / 10.0)
+        temp_factor = 3.0 ** ((self.default_params["temperature"] - 279.45) / 10.0)
         return temp_factor * 0.01 * (V + 55.0) / (1.0 - np.exp(-(V + 55.0) / 10.0))
 
     def _beta_n(self, V: float) -> float:
         """Potassium activation rate constant."""
-        temp_factor = 3.0 ** ((self.default_params["temperature"] - 6.3) / 10.0)
+        temp_factor = 3.0 ** ((self.default_params["temperature"] - 279.45) / 10.0)
         return temp_factor * 0.125 * np.exp(-(V + 65.0) / 80.0)
 
     def _m_inf(self, V: float) -> float:

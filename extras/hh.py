@@ -14,7 +14,7 @@ class HodgkinHuxleyModel:
     """
     Classic Hodgkin-Huxley model implementation.
 
-    Parameters based on the original 1952 paper, adjusted for 6.3°C.
+    Parameters based on the original 1952 paper, adjusted for 279.45K (6.3°C).
     """
 
     def __init__(self):

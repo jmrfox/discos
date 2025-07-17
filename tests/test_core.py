@@ -144,7 +144,7 @@ class TestNeuron:
 
         assert neuron.simulation_params["dt"] == 0.025
         assert neuron.simulation_params["duration"] == 100.0
-        assert neuron.simulation_params["temperature"] == 6.3
+        assert neuron.simulation_params["temperature"] == 279.45
 
     def test_set_simulation_params(self):
         """Test setting simulation parameters."""
@@ -154,7 +154,7 @@ class TestNeuron:
 
         assert neuron.simulation_params["dt"] == 0.01
         assert neuron.simulation_params["duration"] == 200.0
-        assert neuron.simulation_params["temperature"] == 6.3  # Unchanged
+        assert neuron.simulation_params["temperature"] == 279.45  # Unchanged
         assert neuron.simulation_params["new_param"] == 42
 
     def test_compartment_operations(self):

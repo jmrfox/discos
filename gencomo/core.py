@@ -100,7 +100,7 @@ class Neuron:
         self.simulation_params = {
             "dt": 0.025,  # ms
             "duration": 100.0,  # ms
-            "temperature": 6.3,  # °C (for rate constants)
+            "temperature": 279.45,  # K (6.3°C + 273.15, for rate constants)
         }
 
     def set_mesh(self, mesh):

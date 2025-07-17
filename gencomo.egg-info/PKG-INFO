@@ -45,6 +45,7 @@ Requires-Dist: pymesh>=1.0.2
 Requires-Dist: manifold3d>=3.1.1
 Requires-Dist: shapely>=2.0.7
 Requires-Dist: rtree>=1.3.0
+Requires-Dist: neuron>=8.2.7
 Provides-Extra: dev
 Requires-Dist: pytest>=6.0; extra == "dev"
 Requires-Dist: pytest-cov; extra == "dev"
@@ -70,7 +71,7 @@ GenCoMo is a Python package for compartmental simulation of neurons with complex
 - **Mesh-based compartmentalization**: Work directly with neuronal meshes instead of simplified cylinder models
 - **Z-stack conversion**: Convert 3D meshes to binary z-stack representations for analysis
 - **Interactive visualization**: Explore z-stack slices interactively with slider controls
-- **Z-axis slicing**: Automatically slice complex morphologies along the z-axis 
+- **Z-axis slicing**: Automatically slice complex morphologies along the z-axis
 - **Region detection**: Identify closed regions within each slice for compartment generation
 - **Graph construction**: Build connectivity between compartments across adjacent z-levels
 - **Biophysical simulation**: Solve coupled ODEs for membrane potential using Hodgkin-Huxley dynamics
@@ -98,7 +99,7 @@ pip install -r requirements.txt
 
 Key dependencies include:
 - `numpy`, `scipy` - numerical computing
-- `trimesh`, `open3d` - mesh processing  
+- `trimesh`, `open3d` - mesh processing
 - `scikit-image`, `opencv-python` - image processing for cross-sections
 - `networkx` - graph algorithms for connectivity
 - `matplotlib`, `plotly` - visualization (optional)
@@ -152,7 +153,7 @@ compartment_ids = list(neuron.compartment_graph.compartments.keys())
 simulator.add_stimulus(
     compartment_id=compartment_ids[0],
     start_time=10.0,  # ms
-    duration=1.0,     # ms  
+    duration=1.0,     # ms
     amplitude=5.0     # nA
 )
 
@@ -191,7 +192,7 @@ GenCoMo also provides a command-line interface:
 # Process a mesh file
 gencomo process neuron.stl -o model.npz --num-slices 50
 
-# Run simulation  
+# Run simulation
 gencomo simulate model.npz -o results.npz --duration 100 --stimulus comp_0 10 1 5
 
 # Analyze results
@@ -273,13 +274,30 @@ The code handles unit conversions automatically where needed:
 - Spatial coordinates maintain µm units throughout mesh and z-stack operations
 - Capacitance calculations use µF = 1e-6 F for proper scaling with mV and ms
 
+### Important Parameter Scaling Guidelines
+
+**Stimulus Current Scaling**: The appropriate stimulus amplitude depends heavily on compartment size. For a small compartment (e.g., 5 µm² area), even 0.01 nA can generate large voltage changes. Use the following guidelines:
+
+- **Large compartments** (>100 µm²): 1-10 nA stimulus currents are reasonable
+- **Medium compartments** (10-100 µm²): 0.1-1 nA stimulus currents
+- **Small compartments** (<10 µm²): 0.001-0.1 nA stimulus currents
+- **Very small compartments** (<1 µm²): 0.0001-0.01 nA stimulus currents
+
+**Voltage Derivatives**: During action potentials, voltage derivatives (dV/dt) can legitimately reach tens of thousands of mV/ms. This is normal neuronal physiology. However, the voltage amplitude itself should remain within realistic bounds (typically -100 mV to +60 mV for action potentials).
+
+**Capacitance Effects**: Membrane capacitance scales with area. For a compartment with area A (in µm²):
+- Total capacitance = 1.0 µF/cm² × A µm² × 1e-8 cm²/µm² × 1e6 pF/µF = A × 0.01 pF
+- Very small compartments have very small capacitances, making them highly sensitive to current injection
+
+**Troubleshooting Extreme Voltages**: If you see voltages >1000 mV or <-1000 mV, reduce the stimulus amplitude. The current may be too large for the compartment size.
+
 ### Example Parameter Values
 ```python
 # Typical parameter ranges
 simulator.set_biophysics(
     capacitance=1.0,        # µF/cm² (membrane capacitance)
     na_conductance=0.12,    # S/cm² (sodium channel density)
-    k_conductance=0.036,    # S/cm² (potassium channel density)  
+    k_conductance=0.036,    # S/cm² (potassium channel density)
     leak_conductance=0.0003, # S/cm² (leak conductance)
     temperature=6.3         # °C (experimental temperature)
 )
@@ -312,7 +330,7 @@ simulator.add_stimulus(
 #### Core Classes
 
 - `Neuron` - Main neuron model container
-- `Compartment` - Individual compartment with geometry and biophysics  
+- `Compartment` - Individual compartment with geometry and biophysics
 - `CompartmentGraph` - Graph of compartment connectivity
 - `MeshProcessor` - Mesh loading and preprocessing
 - `ZAxisSlicer` - Mesh slicing along z-axis
@@ -329,7 +347,7 @@ simulator.add_stimulus(
 
 **Z-stack Operations**:
 - `mesh_to_zstack()` - Convert mesh to z-stack representation
-- `visualize_zstack_3d()` - 3D z-stack visualization  
+- `visualize_zstack_3d()` - 3D z-stack visualization
 - `visualize_zstack_slices()` - Interactive slice viewer with slider controls
 - `compare_zstack_slices()` - Side-by-side slice comparison
 - `save_zstack_data()` / `load_zstack_data()` - Z-stack I/O operations
