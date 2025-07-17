@@ -20,7 +20,8 @@ from gencomo import MeshSegmenter
 from gencomo.demos import create_cylinder_mesh
 
 
-def validate_single_compartment_connectivity(segmenter, test_name="Single Compartment Test"):
+
+validate_single_compartment_connectivity(segmenter, test_name="Single Compartment Test"):
     """Validate that the connectivity graph has exactly one node (single compartment).
 
     Args:
@@ -81,7 +82,8 @@ def validate_single_compartment_connectivity(segmenter, test_name="Single Compar
     return True
 
 
-def test_single_compartment_cylinder(plot_graph: bool = True, show_plot: bool = True):
+
+test_single_compartment_cylinder(plot_graph: bool = True, show_plot: bool = True):
     """
     Test single compartment segmentation using a 1x1 cylinder with slice_height=2.
 
@@ -217,7 +219,8 @@ def test_single_compartment_cylinder(plot_graph: bool = True, show_plot: bool = 
     return True
 
 
-def test_single_compartment_edge_cases():
+
+test_single_compartment_edge_cases():
     """Test edge cases for single compartment scenarios."""
     print("\n" + "=" * 60)
     print("🧪 SINGLE COMPARTMENT EDGE CASES")
@@ -271,7 +274,8 @@ def test_single_compartment_edge_cases():
     return all_passed
 
 
-def run_all_single_compartment_tests():
+
+run_all_single_compartment_tests():
     """Run all single compartment tests."""
     print("🚀 Starting single compartment test suite...")
 

@@ -16,7 +16,8 @@ from gencomo import MeshSegmenter
 from gencomo.demos import create_cylinder_mesh, create_torus_mesh, create_demo_neuron_mesh
 
 
-def validate_connectivity_graph(segmenter, test_name="Test"):
+
+validate_connectivity_graph(segmenter, test_name="Test"):
     """Validate that the connectivity graph is a single connected component.
 
     Args:
@@ -56,7 +57,8 @@ def validate_connectivity_graph(segmenter, test_name="Test"):
     return is_connected
 
 
-def test_cylinder_segmentation(plot_graph: bool = False, show_plot: bool = True, include_3d_view: bool = False):
+
+test_cylinder_segmentation(plot_graph: bool = False, show_plot: bool = True, include_3d_view: bool = False):
     """Test segmentation on a cylinder mesh with surface area validation.
 
     Args:
@@ -214,7 +216,8 @@ def test_cylinder_segmentation(plot_graph: bool = False, show_plot: bool = True,
     return all_tests_pass and connectivity_valid
 
 
-def test_torus_segmentation(plot_graph: bool = False, show_plot: bool = True, include_3d_view: bool = False):
+
+test_torus_segmentation(plot_graph: bool = False, show_plot: bool = True, include_3d_view: bool = False):
     """Test segmentation on a torus mesh with surface area validation.
 
     Args:
@@ -354,7 +357,8 @@ def test_torus_segmentation(plot_graph: bool = False, show_plot: bool = True, in
     return overall_pass and connectivity_valid
 
 
-def test_neuron_segmentation(plot_graph: bool = False, show_plot: bool = True, include_3d_view: bool = False):
+
+test_neuron_segmentation(plot_graph: bool = False, show_plot: bool = True, include_3d_view: bool = False):
     """Test segmentation on a simplified neuron mesh with complex topology validation.
 
     Args:
@@ -528,7 +532,8 @@ def test_neuron_segmentation(plot_graph: bool = False, show_plot: bool = True, i
     return all_tests_pass and connectivity_valid
 
 
-def run_all_tests():
+
+run_all_tests():
     """Run all segmentation tests."""
     print("🧪 Running All Segmentation Tests")
     print("=" * 50)

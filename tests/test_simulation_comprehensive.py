@@ -14,7 +14,8 @@ from gencomo.simulation import Simulator
 class TestSimulation:
     """Test suite for simulation functionality."""
 
-    def test_debug_integration_basic(self):
+    
+test_debug_integration_basic(self):
         """Test basic integration functionality (incorporates debug_integration.py)."""
         # Create single compartment neuron
         cylinder = create_cylinder_mesh(radius=0.5, length=1.0, resolution=20)
@@ -83,7 +84,8 @@ class TestSimulation:
         assert np.max(voltage) < 100, "Voltage too positive"
         assert len(voltage) > 0, "No voltage data returned"
 
-    def test_parameter_scaling_small_compartment(self):
+    
+test_parameter_scaling_small_compartment(self):
         """Test that small compartments work with appropriately scaled parameters."""
         cylinder = create_cylinder_mesh(radius=0.5, length=1.0, resolution=20)
         segmenter = MeshSegmenter()
@@ -141,7 +143,8 @@ class TestSimulation:
         voltage_range = np.max(voltage) - np.min(voltage)
         assert voltage_range > 1.0, f"Insufficient voltage variation: {voltage_range:.2f} mV"
 
-    def test_integration_method_radau(self):
+    
+test_integration_method_radau(self):
         """Test that Radau integration method works for stiff HH equations."""
         cylinder = create_cylinder_mesh(radius=0.5, length=1.0, resolution=20)
         segmenter = MeshSegmenter()
@@ -197,7 +200,8 @@ class TestSimulation:
         assert results.success, f"Radau integration failed: {results.message}"
         assert len(results.voltages) > 0, "No voltage data returned"
 
-    def test_stimulus_scaling_validation(self):
+    
+test_stimulus_scaling_validation(self):
         """Test that stimulus scaling guidelines are followed."""
         # Test different stimulus amplitudes for small compartment
         # According to guidelines: Small (<10 μm²): 0.001-0.1 nA
@@ -262,7 +266,8 @@ class TestSimulation:
             assert max_abs_voltage < 500, f"Extreme voltage {max_abs_voltage:.1f} mV with {amplitude} nA stimulus"
 
 
-def test_single_compartment_action_potential():
+
+test_single_compartment_action_potential():
     """Test that we can generate a realistic action potential."""
     cylinder = create_cylinder_mesh(radius=0.5, length=1.0, resolution=20)
     segmenter = MeshSegmenter()

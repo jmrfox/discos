@@ -19,7 +19,8 @@ from gencomo.demos import create_cylinder_mesh
 from gencomo.simulation import Simulator
 
 
-def create_single_compartment_neuron():
+
+create_single_compartment_neuron():
     """
     Create a single compartment neuron from a simple cylinder mesh.
 
@@ -79,7 +80,8 @@ def create_single_compartment_neuron():
     return neuron
 
 
-def test_single_compartment_simulation():
+
+test_single_compartment_simulation():
     """
     Test single compartment simulation with stimulus injection.
     """
@@ -172,7 +174,8 @@ def test_single_compartment_simulation():
     return True
 
 
-def plot_simulation_results(results, compartment_id):
+
+plot_simulation_results(results, compartment_id):
     """
     Plot simulation results for the single compartment.
 

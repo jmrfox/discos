@@ -9,7 +9,8 @@ from gencomo import create_cylinder_mesh, Simulator, MeshSegmenter
 from gencomo.core import Neuron, Compartment
 
 
-def test_single_compartment_corrected():
+
+test_single_compartment_corrected():
     """Test single compartment simulation with realistic parameters."""
     print("=" * 80)
     print("🧪 CORRECTED SINGLE COMPARTMENT SIMULATION TEST")
