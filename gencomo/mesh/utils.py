@@ -438,6 +438,7 @@ def _visualize_mesh_trimesh(mesh, title, color):
         return None
 
 
+
 def visualize_mesh_slice_interactive(
     mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]],
     title: str = "Interactive Mesh Slice",
@@ -448,205 +449,201 @@ def visualize_mesh_slice_interactive(
     mesh_opacity: float = 0.3,
 ) -> Optional[object]:
     """
-    Create an interactive visualization showing cross-sections of a 3D mesh.
-
-    Users can use a slider to explore different Z-slice levels and see how
-    the geometry changes along the Z-axis.
-
+    Create an interactive 3D visualization of a mesh with a controllable slice plane.
+    
+    This function displays a 3D mesh and calculates the intersection of the mesh
+    with an xy-plane at a user-controlled z-value. The intersection is shown as a
+    colored line on the mesh. A slider allows the user to interactively change the
+    z-value of the intersection plane.
+    
     Args:
         mesh_data: Either a Trimesh object or (vertices, faces) tuple
         title: Plot title
         z_range: Tuple of (min_z, max_z) for slice range. Auto-detected if None.
-        num_slices: Number of slice levels to create
-        slice_color: Color for the slice lines
-        mesh_color: Color for the background mesh
-        mesh_opacity: Opacity of the background mesh (0-1)
-
+        num_slices: Number of positions for the slider
+        slice_color: Color for the intersection line
+        mesh_color: Color for the 3D mesh
+        mesh_opacity: Opacity of the 3D mesh (0-1)
+    
     Returns:
-        Interactive Plotly figure with slider
+        Plotly figure with interactive slider for controlling the z-value
     """
     try:
         import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
     except ImportError:
-        print("Plotly not available for interactive slice visualization")
+        print("Plotly is required for interactive visualization")
         return None
-
-    # Handle different input formats
+        
+    # Convert input to trimesh object if needed
     if isinstance(mesh_data, tuple):
         vertices, faces = mesh_data
         mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     else:
-        mesh = mesh_data
-
-    # Determine Z range
+        mesh = mesh_data.copy()
+    
+    # Determine z-range if not provided
     if z_range is None:
         z_min, z_max = mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()
         # Add small padding
-        z_padding = (z_max - z_min) * 0.05
-        z_min -= z_padding
-        z_max += z_padding
+        padding = (z_max - z_min) * 0.05
+        z_min -= padding
+        z_max += padding
     else:
         z_min, z_max = z_range
-
-    # Create slice levels
-    slice_levels = np.linspace(z_min, z_max, num_slices)
-
-    try:
-        # Create the base mesh visualization
-        fig = go.Figure()
-
-        # Add the mesh with reduced opacity
-        fig.add_trace(
-            go.Mesh3d(
-                x=mesh.vertices[:, 0],
-                y=mesh.vertices[:, 1],
-                z=mesh.vertices[:, 2],
-                i=mesh.faces[:, 0],
-                j=mesh.faces[:, 1],
-                k=mesh.faces[:, 2],
-                opacity=mesh_opacity,
-                color=mesh_color,
-                name="Mesh",
-                showlegend=True,
+    
+    # Create the base figure with the mesh
+    fig = go.Figure()
+    
+    # Add the mesh to the figure
+    fig.add_trace(go.Mesh3d(
+        x=mesh.vertices[:, 0],
+        y=mesh.vertices[:, 1],
+        z=mesh.vertices[:, 2],
+        i=mesh.faces[:, 0],
+        j=mesh.faces[:, 1],
+        k=mesh.faces[:, 2],
+        opacity=mesh_opacity,
+        color=mesh_color,
+        name="Mesh"
+    ))
+    
+    # Function to create a slice at a given z-value
+    def create_slice_trace(z_value):
+        # Calculate intersection with plane at z_value
+        section = mesh.section(plane_origin=[0, 0, z_value], plane_normal=[0, 0, 1])
+        
+        # If no intersection, return None
+        if section is None or not hasattr(section, 'entities') or len(section.entities) == 0:
+            return None
+            
+        # Process all entities in the section to get 3D coordinates
+        all_points = []
+        
+        for entity in section.entities:
+            if hasattr(entity, 'points') and len(entity.points) > 0:
+                # Get the actual 2D coordinates
+                points_2d = section.vertices[entity.points]
+                
+                # Convert to 3D by adding z_value
+                points_3d = np.column_stack([points_2d, np.full(len(points_2d), z_value)])
+                
+                # Add closing point if needed (to complete the loop)
+                if len(points_2d) > 2 and not np.array_equal(points_2d[0], points_2d[-1]):
+                    closing_point = np.array([points_2d[0][0], points_2d[0][1], z_value])
+                    points_3d = np.vstack([points_3d, closing_point])
+                
+                # Add to all points list
+                all_points.extend(points_3d.tolist())
+                
+                # Add None to create a break between separate entities
+                all_points.append([None, None, None])
+        
+        # If we have points, create a scatter trace
+        if all_points:
+            x_coords = [p[0] if p is not None else None for p in all_points]
+            y_coords = [p[1] if p is not None else None for p in all_points]
+            z_coords = [p[2] if p is not None else None for p in all_points]
+            
+            return go.Scatter3d(
+                x=x_coords,
+                y=y_coords,
+                z=z_coords,
+                mode='lines',
+                line=dict(color=slice_color, width=5),
+                name=f'Slice at z={z_value:.2f}'
             )
-        )
-
-        # Create frames for animation/slider
-        frames = []
-        steps = []
-
-        for i, z_level in enumerate(slice_levels):
-            # Calculate intersection with plane at z_level
-            try:
-                slice_2d = mesh.section(plane_origin=[0, 0, z_level], plane_normal=[0, 0, 1])
-
-                if slice_2d is not None and hasattr(slice_2d, "entities") and len(slice_2d.entities) > 0:
-                    # Convert 2D slice to 3D coordinates
-                    slice_coords = []
-                    for entity in slice_2d.entities:
-                        if hasattr(entity, "points"):
-                            points_3d = np.column_stack([entity.points, np.full(len(entity.points), z_level)])
-                            slice_coords.extend(points_3d.tolist())
-                            slice_coords.append([None, None, None])  # Separator for discontinuous lines
-
-                    if slice_coords:
-                        x_coords = [p[0] if p[0] is not None else None for p in slice_coords]
-                        y_coords = [p[1] if p[1] is not None else None for p in slice_coords]
-                        z_coords = [p[2] if p[2] is not None else None for p in slice_coords]
-
-                        frame_data = [
-                            go.Mesh3d(
-                                x=mesh.vertices[:, 0],
-                                y=mesh.vertices[:, 1],
-                                z=mesh.vertices[:, 2],
-                                i=mesh.faces[:, 0],
-                                j=mesh.faces[:, 1],
-                                k=mesh.faces[:, 2],
-                                opacity=mesh_opacity,
-                                color=mesh_color,
-                                name="Mesh",
-                            ),
-                            go.Scatter3d(
-                                x=x_coords,
-                                y=y_coords,
-                                z=z_coords,
-                                mode="lines",
-                                line=dict(color=slice_color, width=4),
-                                name=f"Slice at Z={z_level:.2f}",
-                            ),
-                        ]
-                    else:
-                        # No intersection at this level
-                        frame_data = [
-                            go.Mesh3d(
-                                x=mesh.vertices[:, 0],
-                                y=mesh.vertices[:, 1],
-                                z=mesh.vertices[:, 2],
-                                i=mesh.faces[:, 0],
-                                j=mesh.faces[:, 1],
-                                k=mesh.faces[:, 2],
-                                opacity=mesh_opacity,
-                                color=mesh_color,
-                                name="Mesh",
-                            )
-                        ]
-                else:
-                    # No slice available
-                    frame_data = [
-                        go.Mesh3d(
-                            x=mesh.vertices[:, 0],
-                            y=mesh.vertices[:, 1],
-                            z=mesh.vertices[:, 2],
-                            i=mesh.faces[:, 0],
-                            j=mesh.faces[:, 1],
-                            k=mesh.faces[:, 2],
-                            opacity=mesh_opacity,
-                            color=mesh_color,
-                            name="Mesh",
-                        )
-                    ]
-
-            except Exception as e:
-                # Fallback for slicing errors
-                frame_data = [
-                    go.Mesh3d(
-                        x=mesh.vertices[:, 0],
-                        y=mesh.vertices[:, 1],
-                        z=mesh.vertices[:, 2],
-                        i=mesh.faces[:, 0],
-                        j=mesh.faces[:, 1],
-                        k=mesh.faces[:, 2],
-                        opacity=mesh_opacity,
-                        color=mesh_color,
-                        name="Mesh",
-                    )
-                ]
-
-            frames.append(go.Frame(data=frame_data, name=str(i)))
-
-            steps.append(
-                {
-                    "args": [[str(i)], {"frame": {"duration": 100, "redraw": True}, "mode": "immediate"}],
-                    "label": f"{z_level:.1f}",
-                    "method": "animate",
-                }
-            )
-
-        # Add slider
-        sliders = [{"active": 0, "currentvalue": {"prefix": "Z-level: "}, "pad": {"t": 50}, "steps": steps}]
-
-        fig.frames = frames
-        fig.update_layout(
-            title=title,
-            sliders=sliders,
-            scene=dict(aspectmode="data", camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))),
-            updatemenus=[
-                {
-                    "type": "buttons",
-                    "showactive": False,
-                    "buttons": [
-                        {
-                            "label": "Play",
-                            "method": "animate",
-                            "args": [None, {"frame": {"duration": 200}, "fromcurrent": True}],
-                        },
-                        {
-                            "label": "Pause",
-                            "method": "animate",
-                            "args": [[None], {"frame": {"duration": 0}, "mode": "immediate"}],
-                        },
-                    ],
-                }
+        
+        return None
+    
+    # Create initial slice
+    initial_z = (z_min + z_max) / 2
+    initial_slice = create_slice_trace(initial_z)
+    
+    # Add initial slice to figure if it exists
+    if initial_slice:
+        fig.add_trace(initial_slice)
+    
+    # Create frames for animation
+    frames = []
+    for i, z_val in enumerate(np.linspace(z_min, z_max, num_slices)):
+        # Create a slice at this z-value
+        slice_trace = create_slice_trace(z_val)
+        
+        # If we have a valid slice, add it to frames
+        if slice_trace:
+            frame_data = [fig.data[0], slice_trace]  # Mesh and slice
+        else:
+            frame_data = [fig.data[0]]  # Just the mesh
+            
+        frames.append(go.Frame(
+            data=frame_data,
+            name=f"frame_{i}",
+            traces=[0, 1]  # Update both traces
+        ))
+    
+    # Create slider steps
+    steps = []
+    for i, z_val in enumerate(np.linspace(z_min, z_max, num_slices)):
+        step = dict(
+            args=[
+                [f"frame_{i}"],
+                {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}
             ],
+            label=f"{z_val:.2f}",
+            method="animate"
         )
-
-        return fig
-
-    except Exception as e:
-        print(f"Failed to create interactive slice visualization: {e}")
-        # Fallback to simple mesh visualization
-        return visualize_mesh_3d(mesh_data, title=title, color=mesh_color)
+        steps.append(step)
+    
+    # Configure the slider
+    sliders = [dict(
+        active=num_slices // 2,  # Start in the middle
+        currentvalue={"prefix": "Z-value: ", "visible": True, "xanchor": "right"},
+        pad={"t": 50, "b": 10},
+        len=0.9,
+        x=0.1,
+        y=0,
+        steps=steps
+    )]
+    
+    # Configure the figure layout
+    fig.update_layout(
+        title=title,
+        scene=dict(
+            aspectmode='data',
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
+        ),
+        height=800,  # Taller to make room for slider
+        margin=dict(l=50, r=50, b=100, t=100),  # Add margin at bottom for slider
+        sliders=sliders,
+        # Add animation controls
+        updatemenus=[dict(
+            type="buttons",
+            showactive=False,
+            y=0,
+            x=0,
+            xanchor="left",
+            yanchor="top",
+            pad=dict(t=60, r=10),
+            buttons=[dict(
+                label="Play",
+                method="animate",
+                args=[None, {"frame": {"duration": 200, "redraw": True}, "fromcurrent": True}]
+            ), dict(
+                label="Pause",
+                method="animate",
+                args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}]
+            ), dict(
+                label="Reset View",
+                method="relayout",
+                args=[{"scene.camera.eye": dict(x=1.5, y=1.5, z=1.5)}]
+            )]
+        )]
+    )
+    
+    # Set frames
+    fig.frames = frames
+    
+    return fig
 
 
 def visualize_mesh_slice_grid(
