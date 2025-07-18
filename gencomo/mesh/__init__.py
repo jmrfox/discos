@@ -12,6 +12,7 @@ from .processor import MeshProcessor
 from .segmentation import MeshSegmenter
 from .utils import (
     analyze_mesh,
+    print_mesh_analysis,
     repair_mesh,
     preprocess_mesh,
     visualize_mesh_3d,

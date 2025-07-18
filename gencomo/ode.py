@@ -8,7 +8,6 @@ mesh-based neuronal compartments.
 import numpy as np
 from typing import Dict, List, Tuple, Callable, Optional, Any
 from scipy.integrate import solve_ivp
-from .core import Neuron, Compartment
 import warnings
 
 
@@ -17,9 +16,9 @@ class ODESystem:
     Implements the ODE system for compartmental neuronal modeling.
     """
 
-    def __init__(self, neuron: Neuron):
-        self.neuron = neuron
-        self.compartment_ids = list(neuron.compartment_graph.compartments.keys())
+    def __init__(self, graph):
+        self.graph = graph
+        self.compartment_ids = list(graph.compartments.keys())
         self.num_compartments = len(self.compartment_ids)
         self.id_to_index = {comp_id: i for i, comp_id in enumerate(self.compartment_ids)}
 

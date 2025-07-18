@@ -19,7 +19,8 @@ def analyze_mesh(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]
         mesh_data: Either a Trimesh object or (vertices, faces) tuple
 
     Returns:
-        Dictionary of mesh properties including topological genus
+        Dictionary of mesh properties including volume, watertightness, winding consistency,
+        face count, vertex count, bounds, and potential issues.
     """
     # Convert to mesh object if needed
     if isinstance(mesh_data, tuple):
@@ -28,85 +29,182 @@ def analyze_mesh(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]
     else:
         # Work with a copy to avoid side effects
         mesh = mesh_data.copy()
-
-    # Calculate volume robustly without modifying the mesh
-    volume = None
-    try:
-        if mesh.is_volume and mesh.is_watertight:
-            volume = mesh.volume
-        elif hasattr(mesh, "volume") and mesh.volume > 0:
-            volume = abs(mesh.volume)  # Take absolute value in case of negative volume
-        else:
-            # Fallback: try to calculate volume even if not marked as watertight
-            try:
-                vol = mesh.volume
-                if vol is not None and not np.isnan(vol):
-                    volume = abs(vol)
-            except:
-                volume = None
-    except:
-        volume = None
-
-    # Calculate topological genus using Euler characteristic
-    # Genus = (2 - V + E - F) / 2, where V = vertices, E = edges, F = faces
-    genus = None
-    edges = None
-    euler_char = None
-    try:
-        V = len(mesh.vertices)
-        F = len(mesh.faces)
-        # Calculate number of edges
-        edges = set()
-        for face in mesh.faces:
-            for i in range(3):
-                edge = tuple(sorted([face[i], face[(i + 1) % 3]]))
-                edges.add(edge)
-        E = len(edges)
-
-        # Euler characteristic for a surface: χ = V - E + F
-        euler_char = V - E + F
-
-        # For a closed surface: genus = (2 - χ) / 2
-        # For multiple connected components: genus = (2 - χ + 2*(components - 1)) / 2
-        # Simplifying for single component: genus = (2 - χ) / 2
-        genus = (2 - euler_char) // 2
-
-        # Ensure genus is non-negative
-        if genus < 0:
-            genus = 0
-
-    except Exception as e:
-        genus = None
-
-    properties = {
-        "num_vertices": len(mesh.vertices),
-        "num_faces": len(mesh.faces),
-        "num_edges": len(edges) if edges is not None else None,
-        "volume": volume,
-        "surface_area": mesh.area,
+    
+    # Initialize results dictionary
+    results = {
+        "face_count": len(mesh.faces),
+        "vertex_count": len(mesh.vertices),
+        "bounds": mesh.bounds.tolist() if hasattr(mesh, "bounds") else None,
         "is_watertight": mesh.is_watertight,
         "is_winding_consistent": mesh.is_winding_consistent,
-        "euler_characteristic": euler_char,
-        "genus": genus,
-        "bounds": {
-            "x_range": (mesh.vertices[:, 0].min(), mesh.vertices[:, 0].max()),
-            "y_range": (mesh.vertices[:, 1].min(), mesh.vertices[:, 1].max()),
-            "z_range": (mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()),
-        },
-        "centroid": mesh.centroid.tolist() if hasattr(mesh, "centroid") else None,
-        "bounding_box_volume": mesh.bounding_box.volume,
+        "issues": [],
     }
-
-    # Add convex hull volume safely
+    
+    # Calculate volume (report actual value, even if negative)
     try:
-        if hasattr(mesh, "convex_hull") and mesh.convex_hull is not None:
-            properties["convex_hull_volume"] = mesh.convex_hull.volume
-        else:
-            properties["convex_hull_volume"] = None
-    except:
-        properties["convex_hull_volume"] = None
+        results["volume"] = mesh.volume
+        if mesh.volume < 0:
+            results["issues"].append("Negative volume detected - face normals may be inverted")
+    except Exception as e:
+        results["volume"] = None
+        results["issues"].append(f"Volume calculation failed: {str(e)}")
+    
+    # Check for non-manifold edges
+    try:
+        if hasattr(mesh, "is_manifold"):
+            results["is_manifold"] = mesh.is_manifold
+            if not mesh.is_manifold:
+                results["issues"].append("Non-manifold edges detected")
+    except Exception:
+        results["is_manifold"] = None
 
-    return properties
+    # Calculate topological properties using trimesh's built-in methods
+    try:
+        # Use trimesh's built-in euler_number property for correct topology calculation
+        # For a sphere: euler_number = 2
+        # For a torus: euler_number = 0
+        # For a double torus: euler_number = -2
+        # Genus = (2 - euler_number) / 2
+        
+        results["euler_characteristic"] = mesh.euler_number
+        
+        # Only calculate genus for closed (watertight) meshes
+        if mesh.is_watertight:
+            # For a closed orientable surface: genus = (2 - euler_number) / 2
+            results["genus"] = int((2 - mesh.euler_number) / 2)
+            
+            # Sanity check - genus should be non-negative for simple shapes
+            if results["genus"] < 0:
+                results["genus"] = 0  # Default to 0 for simple shapes like spheres, cylinders
+                results["issues"].append("Calculated negative genus, defaulting to 0")
+        else:
+            # For non-watertight meshes, genus is not well-defined
+            results["genus"] = None
+            results["issues"].append("Genus undefined for non-watertight mesh")
+    except Exception as e:
+        results["genus"] = None
+        results["euler_characteristic"] = None
+        results["issues"].append(f"Topology calculation failed: {str(e)}")
+
+
+    # Analyze face normals
+    try:
+        if hasattr(mesh, "face_normals") and mesh.face_normals is not None:
+            # Get statistics on face normal directions
+            results["normal_stats"] = {
+                "mean": mesh.face_normals.mean(axis=0).tolist(),
+                "std": mesh.face_normals.std(axis=0).tolist(),
+                "sum": mesh.face_normals.sum(axis=0).tolist(),
+            }
+            
+            # Check if normals are predominantly pointing inward (negative volume)
+            if results.get("volume", 0) < 0:
+                results["normal_direction"] = "inward"
+            else:
+                results["normal_direction"] = "outward"
+    except Exception as e:
+        results["normal_stats"] = None
+        results["issues"].append(f"Normal analysis failed: {str(e)}")
+    
+    # Check for duplicate vertices and faces
+    try:
+        unique_verts = np.unique(mesh.vertices, axis=0)
+        results["duplicate_vertices"] = len(mesh.vertices) - len(unique_verts)
+        if results["duplicate_vertices"] > 0:
+            results["issues"].append(f"Found {results['duplicate_vertices']} duplicate vertices")
+    except Exception:
+        results["duplicate_vertices"] = None
+    
+    # Check for degenerate faces (zero area)
+    try:
+        if hasattr(mesh, "area_faces"):
+            degenerate_count = np.sum(mesh.area_faces < 1e-8)
+            results["degenerate_faces"] = int(degenerate_count)
+            if degenerate_count > 0:
+                results["issues"].append(f"Found {degenerate_count} degenerate faces")
+    except Exception:
+        results["degenerate_faces"] = None
+    
+    # Check for connected components
+    try:
+        components = mesh.split(only_watertight=False)
+        results["component_count"] = len(components)
+        if len(components) > 1:
+            results["issues"].append(f"Mesh has {len(components)} disconnected components")
+    except Exception:
+        results["component_count"] = None
+    
+    return results
+
+
+def print_mesh_analysis(mesh_data: Union[trimesh.Trimesh, Tuple[np.ndarray, np.ndarray]], verbose: bool = False) -> None:
+    """
+    Analyze a mesh and print a formatted report of its properties.
+    
+    Args:
+        mesh_data: Either a Trimesh object or (vertices, faces) tuple
+        verbose: Whether to print detailed information
+    """
+    analysis = analyze_mesh(mesh_data)
+    
+    print("Mesh Analysis Report")
+    print("====================")
+    
+    # Basic properties
+    print(f"\nGeometry:")
+    print(f"  * Vertices: {analysis['vertex_count']}")
+    print(f"  * Faces: {analysis['face_count']}")
+    if analysis.get('component_count') is not None:
+        print(f"  * Components: {analysis['component_count']}")
+    if analysis.get('volume') is not None:
+        print(f"  * Volume: {analysis['volume']:.2f}")
+    if analysis.get('bounds') is not None:
+        min_bound, max_bound = analysis['bounds']
+        print(f"  * Bounds: [{min_bound[0]:.1f}, {min_bound[1]:.1f}, {min_bound[2]:.1f}] to [{max_bound[0]:.1f}, {max_bound[1]:.1f}, {max_bound[2]:.1f}]")
+    
+    # Mesh quality
+    print(f"\nMesh Quality:")
+    print(f"  * Watertight: {analysis['is_watertight']}")
+    print(f"  * Winding Consistent: {analysis['is_winding_consistent']}")
+    if analysis.get('is_manifold') is not None:
+        print(f"  * Manifold: {analysis['is_manifold']}")
+    if analysis.get('normal_direction') is not None:
+        print(f"  * Normal Direction: {analysis['normal_direction']}")
+    if analysis.get('duplicate_vertices') is not None:
+        print(f"  * Duplicate Vertices: {analysis['duplicate_vertices']}")
+    if analysis.get('degenerate_faces') is not None:
+        print(f"  * Degenerate Faces: {analysis['degenerate_faces']}")
+    
+    # Topology
+    if analysis.get('genus') is not None or analysis.get('euler_characteristic') is not None:
+        print(f"\nTopology:")
+        if analysis.get('genus') is not None:
+            print(f"  * Genus: {analysis['genus']}")
+        if analysis.get('euler_characteristic') is not None:
+            print(f"  * Euler Characteristic: {analysis['euler_characteristic']}")
+    
+    # Issues
+    if analysis['issues']:
+        print(f"\nIssues Detected ({len(analysis['issues'])}):")
+        for i, issue in enumerate(analysis['issues']):
+            print(f"  {i+1}. {issue}")
+    else:
+        print(f"\nNo issues detected")
+    
+    # Detailed stats
+    if verbose and analysis.get('normal_stats') is not None:
+        print(f"\nNormal Statistics:")
+        mean = analysis['normal_stats']['mean']
+        sum_val = analysis['normal_stats']['sum']
+        print(f"  * Mean: [{mean[0]:.4f}, {mean[1]:.4f}, {mean[2]:.4f}]")
+        print(f"  * Sum: [{sum_val[0]:.4f}, {sum_val[1]:.4f}, {sum_val[2]:.4f}]")
+    
+    print("\nRecommendation:")
+    if analysis['issues']:
+        print("  Consider using repair_mesh() to fix the detected issues.")
+    else:
+        print("  Mesh appears to be in good condition.")
+    print("====================")
 
 
 def repair_mesh(
@@ -115,6 +213,9 @@ def repair_mesh(
     remove_duplicates: bool = True,
     fix_normals: bool = True,
     remove_degenerate: bool = True,
+    fix_negative_volume: bool = True,
+    keep_largest_component: bool = False,
+    verbose: bool = True,
 ) -> trimesh.Trimesh:
     """
     Attempt to repair common mesh issues to improve watertightness and quality.
@@ -125,6 +226,9 @@ def repair_mesh(
         remove_duplicates: Whether to remove duplicate faces and vertices
         fix_normals: Whether to fix face normal consistency
         remove_degenerate: Whether to remove degenerate faces
+        fix_negative_volume: Whether to invert faces if mesh has negative volume
+        keep_largest_component: Whether to keep only the largest connected component
+        verbose: Whether to print repair summary
 
     Returns:
         Repaired mesh (new copy, original is not modified)
@@ -137,6 +241,17 @@ def repair_mesh(
         mesh = mesh_data.copy()  # Work on a copy
 
     repair_log = []
+    
+    # Fix negative volume by inverting faces if needed
+    if fix_negative_volume:
+        try:
+            # Check if the mesh has a negative volume
+            if hasattr(mesh, "volume") and mesh.volume < 0:
+                initial_volume = mesh.volume
+                mesh.invert()
+                repair_log.append(f"Inverted faces to fix negative volume: {initial_volume:.2f} → {mesh.volume:.2f}")
+        except Exception as e:
+            repair_log.append(f"Failed to fix negative volume: {e}")
 
     # Remove duplicate and degenerate faces
     if remove_duplicates:
@@ -185,6 +300,26 @@ def repair_mesh(
                     repair_log.append("Attempted to fill holes but mesh still not watertight")
         except Exception as e:
             repair_log.append(f"Failed to fill holes: {e}")
+    
+    # Keep only the largest component if requested
+    if keep_largest_component:
+        try:
+            components = mesh.split(only_watertight=False)
+            if len(components) > 1:
+                # Keep the largest component by volume or face count
+                volumes = [abs(c.volume) if hasattr(c, "volume") else len(c.faces) for c in components]
+                largest_idx = np.argmax(volumes)
+                mesh = components[largest_idx]
+                repair_log.append(f"Kept largest of {len(components)} components (volume: {volumes[largest_idx]:.2f})")
+        except Exception as e:
+            repair_log.append(f"Failed to isolate largest component: {e}")
+    
+    # Final processing to ensure consistency
+    try:
+        mesh.process(validate=True)
+        repair_log.append("Applied final mesh processing and validation")
+    except Exception as e:
+        repair_log.append(f"Final processing failed: {e}")
 
     # Store repair log as mesh metadata
     if not hasattr(mesh, "metadata"):
@@ -192,12 +327,21 @@ def repair_mesh(
     mesh.metadata["repair_log"] = repair_log
 
     # Print repair summary
-    if repair_log:
-        print("🔧 Mesh Repair Summary:")
-        for log_entry in repair_log:
-            print(f"  • {log_entry}")
-    else:
-        print("🔧 No repairs needed - mesh is in good condition")
+    if verbose:
+        if repair_log:
+            print("🔧 Mesh Repair Summary:")
+            for log_entry in repair_log:
+                print(f"  • {log_entry}")
+            
+            # Print final mesh status
+            print("\n📊 Final Mesh Status:")
+            print(f"  • Volume: {mesh.volume if hasattr(mesh, 'volume') else 'N/A'}")
+            print(f"  • Watertight: {mesh.is_watertight}")
+            print(f"  • Winding consistent: {mesh.is_winding_consistent}")
+            print(f"  • Faces: {len(mesh.faces)}")
+            print(f"  • Vertices: {len(mesh.vertices)}")
+        else:
+            print("🔧 No repairs needed - mesh is in good condition")
 
     return mesh
 

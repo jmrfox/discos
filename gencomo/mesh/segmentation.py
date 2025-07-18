@@ -12,9 +12,13 @@ This module implements a robust mesh segmentation algorithm that:
 import numpy as np
 import trimesh
 import networkx as nx
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 import warnings
+
+# Import SegmentGraph using TYPE_CHECKING to avoid circular imports
+if TYPE_CHECKING:
+    from ..model import SegmentGraph
 
 
 @dataclass
@@ -54,7 +58,7 @@ class MeshSegmenter:
         self.segments: List[Segment] = []
         self.connectivity_graph = None
 
-    def segment_mesh(self, mesh: trimesh.Trimesh, slice_height: float, min_volume: float = 1e-6) -> List[Segment]:
+    def segment_mesh(self, mesh: trimesh.Trimesh, slice_height: float, min_volume: float = 1e-6, return_segment_graph: bool = False):
         """
         Segment mesh into volumetric segments.
 
@@ -62,9 +66,10 @@ class MeshSegmenter:
             mesh: Input mesh (must be single closed volume)
             slice_height: Height of each slice
             min_volume: Minimum segment volume threshold
+            return_segment_graph: If True, returns a SegmentGraph instance instead of segments list
 
         Returns:
-            List of segments
+            List[Segment] or SegmentGraph: List of segments or a SegmentGraph instance if return_segment_graph=True
         """
         self.original_mesh = mesh.copy()
         self.slice_height = slice_height
@@ -86,7 +91,11 @@ class MeshSegmenter:
         # Step 4: Validate conservation
         self._validate_conservation()
 
-        return self.segments
+        # Return SegmentGraph if requested, otherwise return segments list
+        if return_segment_graph:
+            return self.get_segment_graph()
+        else:
+            return self.segments
 
     def _validate_single_hull_mesh(self, mesh: trimesh.Trimesh):
         """Step 0: Validate that mesh is a single closed volume."""
@@ -490,9 +499,24 @@ class MeshSegmenter:
 
     def get_connected_components(self) -> List[List[str]]:
         """Get connected components in the graph."""
-        if self.connectivity_graph is None:
+        if not self.connectivity_graph:
             return []
         return [list(component) for component in nx.connected_components(self.connectivity_graph)]
+
+    def get_segment_graph(self):
+        """Create and return a SegmentGraph instance from the segmentation results.
+        
+        Returns:
+            SegmentGraph: A graph representation of the segmented structure
+        """
+        # Import here to avoid circular imports
+        from ..model import SegmentGraph
+        
+        if not self.segments or not self.connectivity_graph:
+            raise ValueError("Must run segment_mesh before getting segment graph")
+            
+        # Create a SegmentGraph instance from the segments and connectivity graph
+        return SegmentGraph(segments=self.segments, connectivity_graph=self.connectivity_graph)
 
     def compute_segmentation_statistics(self) -> Dict:
         """Compute statistics about the segmentation."""

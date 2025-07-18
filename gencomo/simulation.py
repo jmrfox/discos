@@ -7,7 +7,6 @@ Provides high-level interface for running simulations and analyzing results.
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any, Union
 from scipy.integrate import solve_ivp
-from .core import Neuron
 from .ode import ODESystem
 import warnings
 from dataclasses import dataclass
@@ -40,9 +39,9 @@ class Simulator:
     High-level simulation interface for GenCoMo models.
     """
 
-    def __init__(self, neuron: Neuron):
-        self.neuron = neuron
-        self.ode_system = ODESystem(neuron)
+    def __init__(self, graph):
+        self.graph = graph
+        self.ode_system = ODESystem(graph)
         self.results = None
 
     def set_biophysics(self, **params):

@@ -9,14 +9,13 @@ __version__ = "0.1.0"
 __author__ = "Jordan M. R. Fox"
 __email__ = "jordanmrfox@gmail.com"
 
-from .core import Neuron, Compartment, CompartmentGraph
-
 # Mesh functions from mesh submodule (primary 3D representation)
 from .mesh import (
     MeshProcessor,
     MeshSegmenter,
     visualize_mesh_3d,
     analyze_mesh,
+    print_mesh_analysis,
     repair_mesh,
     preprocess_mesh,
     visualize_mesh_slice_interactive,
@@ -38,11 +37,10 @@ from .demos import (
 from .ode import ODESystem
 from .simulation import Simulator
 
+# Utility functions
+from .utils import data_path
+
 __all__ = [
-    # Core classes
-    "Neuron",
-    "Compartment",
-    "CompartmentGraph",
     # Mesh processing (primary 3D representation)
     "MeshProcessor",
     "MeshSegmenter",
@@ -64,4 +62,6 @@ __all__ = [
     "Segment",
     "ODESystem",
     "Simulator",
+    # Utility functions
+    "data_path",
 ]
