@@ -12,13 +12,9 @@ This module implements a robust mesh segmentation algorithm that:
 import numpy as np
 import trimesh
 import networkx as nx
-from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
+from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 import warnings
-
-# Import SegmentGraph using TYPE_CHECKING to avoid circular imports
-if TYPE_CHECKING:
-    from ..model import SegmentGraph
 
 
 @dataclass
@@ -47,6 +43,289 @@ class Segment:
     z_max: float
 
 
+class SegmentGraph(nx.Graph):
+    """
+    Graph representation of segmented mesh.
+    
+    This class wraps a NetworkX graph to represent the connectivity
+    between segments in a compartmental model. It provides methods
+    for analyzing the graph structure and accessing properties of
+    segments based on their position and connectivity.
+
+    Each node represents a segment, and each edge is a connectivity between segments.
+    """
+    
+    def __init__(self):
+        """
+        Initialize a SegmentGraph by super()
+        """
+        super().__init__()
+    
+    def set_segment_properties(self, segment_id: str, properties: Dict[str, Any]) -> None:
+        """
+        Set properties for a specific segment.
+        
+        Args:
+            segment_id: ID of the segment to update
+            properties: Dictionary of properties to set
+        """
+        if segment_id not in self.graph:
+            raise ValueError(f"Segment {segment_id} not found in graph")
+            
+        for key, value in properties.items():
+            self.graph.nodes[segment_id][key] = value
+            
+    def get_segment_properties(self, segment_id: str) -> Dict[str, Any]:
+        """
+        Get all properties of a specific segment.
+        
+        Args:
+            segment_id: ID of the segment
+            
+        Returns:
+            Dictionary of segment properties
+        """
+        if segment_id not in self.graph:
+            raise ValueError(f"Segment {segment_id} not found in graph")
+            
+        return dict(self.graph.nodes[segment_id])
+    
+    def visualize(self, 
+                 color_by: str = 'slice_index', 
+                 show_plot: bool = True,
+                 save_path: str = None,
+                 figsize: tuple = (12, 10),
+                 node_scale: float = 1000.0,
+                 repulsion_strength: float = 0.1,
+                 iterations: int = 100,
+                 x_weight: float = 0.5,
+                 y_weight: float = 0.5) -> Any:
+        """
+        Visualize the segment graph.
+        
+        Args:
+            color_by: Property to color nodes by ('slice_index', 'volume', or any other node attribute)
+            show_plot: Whether to display the plot
+            save_path: Path to save the plot
+            figsize: Figure size
+            node_scale: Scaling factor for node sizes
+            repulsion_strength: Strength of node repulsion (higher = more spread)
+            iterations: Number of iterations for position optimization
+            x_weight: Weight for x-coordinate in horizontal positioning (0.0 to 1.0)
+            y_weight: Weight for y-coordinate in horizontal positioning (0.0 to 1.0)
+            
+        Returns:
+            Figure object
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.cm as cm
+            import numpy as np
+            
+            # Create figure
+            fig, ax = plt.subplots(figsize=figsize)
+            
+            # Normalize weights for horizontal positioning
+            total_weight = x_weight + y_weight
+            if total_weight == 0:
+                # Default to equal weighting if both weights are zero
+                x_weight = y_weight = 0.5
+            else:
+                # Normalize weights to sum to 1
+                x_weight = x_weight / total_weight
+                y_weight = y_weight / total_weight
+            
+            # Initialize positions based on segment centroids
+            pos = {}
+            z_levels = {}  # Track z-levels for each node
+            
+            # First pass: collect z-levels and initial positions
+            for node, data in self.graph.nodes(data=True):
+                # Get centroid with better error handling
+                centroid = data.get('centroid', None)
+                if centroid is None:
+                    # Generate a random position if no centroid is available
+                    # This ensures nodes don't stack on top of each other
+                    raise ValueError(f"Node {node} has no centroid")
+                    # import random
+                    # centroid = [random.uniform(-1, 1), random.uniform(-1, 1), data.get('slice_index', 0) or 0]
+                    
+                # Store z-level for vertical positioning
+                z_levels[node] = centroid[2]
+                
+                # Use weighted combination of x and y for horizontal positioning
+                h_pos = x_weight * centroid[0] + y_weight * centroid[1]
+                
+                # Initialize position
+                pos[node] = np.array([h_pos, centroid[2]])  # [horizontal, vertical]
+            
+            # Group nodes by similar z-levels
+            z_groups = {}
+            z_tolerance = 0.1  # Tolerance for considering nodes at same z-level
+            
+            for node, z in z_levels.items():
+                # Find if this node belongs to an existing z-group
+                assigned = False
+                for group_z, group_nodes in z_groups.items():
+                    if abs(z - group_z) < z_tolerance:
+                        group_nodes.append(node)
+                        assigned = True
+                        break
+                        
+                if not assigned:
+                    # Create new group
+                    z_groups[z] = [node]
+            
+            # For nodes at the same z-level that have identical horizontal positions,
+            # spread them out horizontally
+            for group_z, group_nodes in z_groups.items():
+                if len(group_nodes) > 1:
+                    # Check if nodes have identical horizontal positions
+                    h_positions = [pos[node][0] for node in group_nodes]
+                    if len(set(h_positions)) < len(h_positions):
+                        # Spread nodes horizontally
+                        spread = 0.5  # Base spread distance
+                        for i, node in enumerate(group_nodes):
+                            # Offset from center, alternating left and right
+                            offset = spread * (i - (len(group_nodes) - 1) / 2)
+                            pos[node][0] = pos[node][0] + offset
+            
+            # Apply repulsion to prevent overlapping nodes
+            if repulsion_strength > 0 and iterations > 0:
+                # First normalize all positions to [0,1] range for stable repulsion
+                pos_array = np.array(list(pos.values()))
+                if len(pos_array) > 0:  # Check if there are any nodes
+                    min_pos = pos_array.min(axis=0)
+                    max_pos = pos_array.max(axis=0)
+                    range_pos = max_pos - min_pos
+                    # Avoid division by zero
+                    range_pos = np.where(range_pos == 0, 1, range_pos)
+                    
+                    # Normalize positions
+                    for node in pos:
+                        pos[node] = (pos[node] - min_pos) / range_pos
+                    
+                    # Apply repulsion iterations
+                    for _ in range(iterations):
+                        # Calculate repulsive forces for each node
+                        forces = {}
+                        for node1 in self.graph.nodes():
+                            force = np.zeros(2)
+                            for node2 in self.graph.nodes():
+                                if node1 != node2:
+                                    diff = pos[node1] - pos[node2]
+                                    dist = np.linalg.norm(diff)
+                                    
+                                    # Apply stronger repulsion for nodes at similar z-levels
+                                    z_similarity = 1.0
+                                    if abs(diff[1]) < 0.1:  # Similar z-level
+                                        z_similarity = 5.0  # Stronger repulsion horizontally
+                                        
+                                    # Avoid division by zero
+                                    if dist < 0.01:
+                                        dist = 0.01
+                                        
+                                    # Repulsive force inversely proportional to distance
+                                    # Stronger in horizontal direction for nodes at same z-level
+                                    force_magnitude = repulsion_strength / (dist ** 2)
+                                    force_vector = diff / dist * force_magnitude
+                                    
+                                    # Apply stronger horizontal force for nodes at similar heights
+                                    if abs(diff[1]) < 0.1:  # Similar heights
+                                        force_vector[0] *= z_similarity  # Boost horizontal component
+                                        
+                                    force += force_vector
+                            
+                            forces[node1] = force
+                        
+                        # Apply forces with limited vertical movement
+                        for node, force in forces.items():
+                            # Limit vertical movement to preserve z-level ordering
+                            force[1] *= 0.1  # Reduce vertical component
+                            pos[node] += force * 0.05  # Small step size for stability
+                    
+                    # Scale positions back to original range and offset
+                    for node in pos:
+                        pos[node] = pos[node] * range_pos + min_pos
+            
+            # Node colors based on specified property
+            if color_by in nx.get_node_attributes(self.graph, color_by):
+                property_values = list(nx.get_node_attributes(self.graph, color_by).values())
+                node_colors = property_values
+                cmap = cm.viridis
+            else:
+                # Default: color by slice_index
+                slice_indices = [data.get('slice_index', 0) for _, data in self.graph.nodes(data=True)]
+                node_colors = slice_indices
+                cmap = cm.viridis
+            
+            # Node sizes based on volume with better scaling
+            volumes = [data.get('volume', 1.0) for _, data in self.graph.nodes(data=True)]
+            if volumes:
+                # Scale volumes for better visualization
+                min_vol = min(volumes) if min(volumes) > 0 else 1e-6
+                max_vol = max(volumes)
+                # Logarithmic scaling for better size distribution
+                log_volumes = [np.log10(max(v, min_vol)) for v in volumes]
+                # Scale to reasonable node sizes
+                min_size = 50  # Minimum node size
+                max_size = 1000  # Maximum node size
+                if max(log_volumes) > min(log_volumes):
+                    node_sizes = [min_size + (max_size - min_size) * 
+                                 (v - min(log_volumes)) / (max(log_volumes) - min(log_volumes)) 
+                                 for v in log_volumes]
+                else:
+                    node_sizes = [min_size + (max_size - min_size) * 0.5 for _ in log_volumes]
+                
+                # Apply user scaling factor
+                node_sizes = [s * node_scale / 1000.0 for s in node_sizes]
+            else:
+                node_sizes = 100
+            
+            # Draw the graph
+            nx.draw_networkx(
+                self.graph, 
+                pos=pos,
+                node_color=node_colors,
+                cmap=cmap,
+                node_size=node_sizes,
+                with_labels=True,
+                font_size=8,
+                font_weight='bold',
+                edge_color='gray',
+                width=2,
+                alpha=0.8,
+                ax=ax
+            )
+            
+            # Add title and labels
+            ax.set_title('Segment Graph Visualization', fontsize=14, fontweight='bold')
+            ax.set_xlabel(f'Horizontal Position (X*{x_weight:.2f} + Y*{y_weight:.2f})', fontsize=12)
+            ax.set_ylabel('Z Position (Height)', fontsize=12)
+            
+            # Add colorbar if coloring by property
+            if color_by:
+                sm = plt.cm.ScalarMappable(cmap=cmap)
+                sm.set_array([])
+                cbar = plt.colorbar(sm, ax=ax)
+                cbar.set_label(color_by.replace('_', ' ').title())
+            
+            # Save if path provided
+            if save_path:
+                fig.savefig(save_path, dpi=150, bbox_inches='tight')
+                print(f"Graph visualization saved to: {save_path}")
+                
+            if show_plot:
+                plt.show()
+                
+            return fig
+            
+        except ImportError:
+            warnings.warn("Matplotlib is required for visualization")
+            return None
+
+
+
 class MeshSegmenter:
     """Systematic mesh segmentation using cross-sectional cuts."""
 
@@ -56,7 +335,7 @@ class MeshSegmenter:
         self.cross_sections: List[CrossSection] = []
         self.slices: List[Dict] = []  # List of slice boundary info
         self.segments: List[Segment] = []
-        self.connectivity_graph = None
+        self.graph = SegmentGraph()
 
     def segment_mesh(self, mesh: trimesh.Trimesh, slice_height: float, min_volume: float = 1e-6, return_segment_graph: bool = False):
         """
@@ -86,7 +365,7 @@ class MeshSegmenter:
         self._extract_slices_and_segments(mesh, min_volume)
 
         # Step 3: Build connectivity graph
-        self._build_connectivity_graph()
+        self._build_graph()
 
         # Step 4: Validate conservation
         self._validate_conservation()
@@ -308,13 +587,25 @@ class MeshSegmenter:
 
         return external_area, internal_area
 
-    def _build_connectivity_graph(self):
-        """Step 3: Build connectivity graph based on shared cross-section boundaries."""
-        self.connectivity_graph = nx.Graph()
-
-        # Add all segments as nodes
+    def _build_graph(self):
+        """Step 3: Build graph based on shared cross-section boundaries."""
+        # Clear any existing graph data but keep the SegmentGraph instance
+        self.graph.graph.clear()
+        
+        # Add all segments as nodes with their properties
         for segment in self.segments:
-            self.connectivity_graph.add_node(segment.id, segment=segment)
+            self.graph.graph.add_node(
+                segment.id,
+                segment=segment,
+                volume=segment.volume,
+                external_surface_area=segment.external_surface_area,
+                internal_surface_area=segment.internal_surface_area,
+                centroid=segment.centroid,
+                z_min=segment.z_min,
+                z_max=segment.z_max,
+                slice_index=segment.slice_index,
+                segment_index=segment.segment_index
+            )
 
         connections_found = 0
 
@@ -332,12 +623,16 @@ class MeshSegmenter:
             if len(segments_at_cut) > 1:
                 connections = self._find_shared_boundary_connections(segments_at_cut, z_position)
                 for seg1_id, seg2_id in connections:
-                    if not self.connectivity_graph.has_edge(seg1_id, seg2_id):
-                        self.connectivity_graph.add_edge(seg1_id, seg2_id)
+                    if not self.graph.graph.has_edge(seg1_id, seg2_id):
+                        self.graph.graph.add_edge(seg1_id, seg2_id)
                         connections_found += 1
                         print(f"  Connected {seg1_id} ↔ {seg2_id}")
 
-        print(f"✅ Built connectivity graph: {len(self.connectivity_graph.nodes)} nodes, " f"{connections_found} edges")
+        print(f"✅ Built connectivity graph: {len(self.graph.graph.nodes)} nodes, " f"{connections_found} edges")
+        
+        # Update the segments list in the SegmentGraph instance
+        self.graph.segments = self.segments
+        self.graph.segment_dict = {segment.id: segment for segment in self.segments}
 
     def _segment_has_faces_at_z(self, segment: Segment, z_position: float) -> bool:
         """Check if a segment has faces at the given z-position."""
@@ -493,30 +788,26 @@ class MeshSegmenter:
 
     def get_connected_segments(self, segment_id: str) -> List[str]:
         """Get segments connected to the given segment."""
-        if self.connectivity_graph is None:
+        if self.graph is None:
             return []
-        return list(self.connectivity_graph.neighbors(segment_id))
+        return list(self.graph.get_connected_segments(segment_id))
 
     def get_connected_components(self) -> List[List[str]]:
         """Get connected components in the graph."""
-        if not self.connectivity_graph:
+        if not self.graph:
             return []
-        return [list(component) for component in nx.connected_components(self.connectivity_graph)]
+        return self.graph.get_connected_components()
 
     def get_segment_graph(self):
-        """Create and return a SegmentGraph instance from the segmentation results.
+        """Return the SegmentGraph instance maintained by this segmenter.
         
         Returns:
             SegmentGraph: A graph representation of the segmented structure
         """
-        # Import here to avoid circular imports
-        from ..model import SegmentGraph
-        
-        if not self.segments or not self.connectivity_graph:
+        if not self.segments or self.graph.graph.number_of_nodes() == 0:
             raise ValueError("Must run segment_mesh before getting segment graph")
             
-        # Create a SegmentGraph instance from the segments and connectivity graph
-        return SegmentGraph(segments=self.segments, connectivity_graph=self.connectivity_graph)
+        return self.graph
 
     def compute_segmentation_statistics(self) -> Dict:
         """Compute statistics about the segmentation."""
@@ -533,8 +824,8 @@ class MeshSegmenter:
                 "max": max(volumes) if volumes else 0,
             },
             "connectivity_stats": {
-                "num_components": len(self.get_connected_components()) if self.connectivity_graph else 0,
-                "num_edges": len(self.connectivity_graph.edges) if self.connectivity_graph else 0,
+                "num_components": len(self.get_connected_components()) if self.graph else 0,
+                "num_edges": len(self.graph.graph.edges) if self.graph else 0,
             },
         }
 
@@ -663,7 +954,7 @@ class MeshSegmenter:
         Returns:
             matplotlib figure object or save path
         """
-        if self.connectivity_graph is None:
+        if self.graph is None:
             raise ValueError("No connectivity graph available. Run segment_mesh() first.")
 
         try:
@@ -748,12 +1039,12 @@ class MeshSegmenter:
             # Draw the graph with improved styling
             # Draw edges first so they appear behind nodes
             nx.draw_networkx_edges(
-                self.connectivity_graph, pos, ax=ax1, edge_color="darkblue", width=2.5, alpha=0.7, style="-"
+                self.graph, pos, ax=ax1, edge_color="darkblue", width=2.5, alpha=0.7, style="-"
             )
 
             # Draw nodes with smaller size and better visibility
             nx.draw_networkx_nodes(
-                self.connectivity_graph,
+                self.graph,
                 pos,
                 ax=ax1,
                 node_color=colors,
@@ -765,7 +1056,7 @@ class MeshSegmenter:
 
             # Draw labels with better contrast
             nx.draw_networkx_labels(
-                self.connectivity_graph, pos, ax=ax1, font_size=7, font_weight="bold", font_color="white"
+                self.graph, pos, ax=ax1, font_size=7, font_weight="bold", font_color="white"
             )
 
             ax1.set_xlabel("Horizontal Position", fontsize=12)
@@ -793,14 +1084,14 @@ class MeshSegmenter:
                 pos_network[segment.id] = (x_pos, z_level)
 
         nx.draw_networkx_nodes(
-            self.connectivity_graph, pos_network, ax=ax_network, node_color=colors, node_size=node_sizes, alpha=0.8
+            self.graph, pos_network, ax=ax_network, node_color=colors, node_size=node_sizes, alpha=0.8
         )
 
         nx.draw_networkx_edges(
-            self.connectivity_graph, pos_network, ax=ax_network, edge_color="gray", width=2, alpha=0.6
+            self.graph, pos_network, ax=ax_network, edge_color="gray", width=2, alpha=0.6
         )
 
-        nx.draw_networkx_labels(self.connectivity_graph, pos_network, ax=ax_network, font_size=8, font_weight="bold")
+        nx.draw_networkx_labels(self.graph, pos_network, ax=ax_network, font_size=8, font_weight="bold")
 
         ax_network.set_xlabel("Horizontal Position", fontsize=12)
         ax_network.set_ylabel("Z-Level (Slice Index)", fontsize=12)
@@ -813,7 +1104,7 @@ class MeshSegmenter:
         # Add statistics text
         stats_text = f"""Graph Statistics:
 Segments: {len(self.segments)}
-Connections: {len(self.connectivity_graph.edges)}
+Connections: {len(self.graph.edges)}
 Z-levels: {len(z_levels)}
 Total Volume: {sum(s.volume for s in self.segments):.3f}"""
 

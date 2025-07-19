@@ -9,10 +9,9 @@ __version__ = "0.1.0"
 __author__ = "Jordan M. R. Fox"
 __email__ = "jordanmrfox@gmail.com"
 
-# Mesh functions from mesh submodule (primary 3D representation)
+# Mesh functions (primary 3D representation)
 from .mesh import (
     MeshProcessor,
-    MeshSegmenter,
     visualize_mesh_3d,
     analyze_mesh,
     print_mesh_analysis,
@@ -21,6 +20,9 @@ from .mesh import (
     visualize_mesh_slice_interactive,
     visualize_mesh_slice_grid,
 )
+
+# Segmentation functions
+from .segmentation import MeshSegmenter, Segment, SegmentGraph
 
 # Demo mesh functions from demos module
 from .demos import (

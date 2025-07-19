@@ -9,7 +9,7 @@ import numpy as np
 import trimesh
 from typing import Tuple, Optional, Dict, Any, List
 import warnings
-
+from mesh import Mesh
 
 def create_cylinder_mesh(
     length: float = 100.0,
