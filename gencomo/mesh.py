@@ -6,7 +6,7 @@ import numpy as np
 import trimesh
 from typing import Optional, Tuple, Dict, Any, Union
 
-class Mesh:
+class MeshManager:
     """
     Unified mesh class handling loading, processing, and analysis.
     """
@@ -16,7 +16,7 @@ class Mesh:
         self.mesh = mesh
         self.original_mesh = mesh
         self.bounds = self._compute_bounds()
-
+        
         # Attributes
         self.verbose = verbose
         self.stats = {
@@ -80,6 +80,12 @@ class Mesh:
         except Exception as e:
             raise ValueError(f"Failed to load mesh from {filepath}: {str(e)}")
 
+
+    def copy(self):
+        return MeshManager(self.mesh.copy(), verbose=self.verbose)
+
+    def to_trimesh(self):
+        return self.mesh
 
     def _compute_bounds(self) -> Optional[Dict[str, Tuple[float, float]]]:
         """Compute mesh bounding box."""
@@ -176,7 +182,7 @@ class Mesh:
         # Apply rotation
         self.mesh.vertices = (rotation_matrix @ vertices_centered.T).T + self.mesh.centroid
         self.bounds = self._compute_bounds()
-
+        
         return self.mesh
 
     def _rotation_matrix_between_vectors(self, vec1: np.ndarray, vec2: np.ndarray) -> np.ndarray:
@@ -220,20 +226,22 @@ class Mesh:
             Dictionary of mesh properties including volume, watertightness, winding consistency,
             face count, vertex count, bounds, and potential issues.
         """    
+
+        mesh = self.to_trimesh()
         # Initialize results dictionary
         results = {
-            "face_count": len(self.faces),
-            "vertex_count": len(self.vertices),
-            "bounds": self.bounds.tolist() if hasattr(self, "bounds") else None,
-            "is_watertight": self.is_watertight,
-            "is_winding_consistent": self.is_winding_consistent,
+            "face_count": len(mesh.faces),
+            "vertex_count": len(mesh.vertices),
+            "bounds": mesh.bounds.tolist() if hasattr(mesh, "bounds") else None,
+            "is_watertight": mesh.is_watertight,
+            "is_winding_consistent": mesh.is_winding_consistent,
             "issues": [],
         }
         
         # Calculate volume (report actual value, even if negative)
         try:
-            results["volume"] = self.volume
-            if self.volume < 0:
+            results["volume"] = mesh.volume
+            if mesh.volume < 0:
                 results["issues"].append("Negative volume detected - face normals may be inverted")
         except Exception as e:
             results["volume"] = None
@@ -241,9 +249,9 @@ class Mesh:
         
         # Check for non-manifold edges
         try:
-            if hasattr(self, "is_manifold"):
-                results["is_manifold"] = self.is_manifold
-                if not self.is_manifold:
+            if hasattr(mesh, "is_manifold"):
+                results["is_manifold"] = mesh.is_manifold
+                if not mesh.is_manifold:
                     results["issues"].append("Non-manifold edges detected")
         except Exception:
             results["is_manifold"] = None
@@ -256,12 +264,12 @@ class Mesh:
             # For a double torus: euler_number = -2
             # Genus = (2 - euler_number) / 2
             
-            results["euler_characteristic"] = self.euler_number
+            results["euler_characteristic"] = mesh.euler_number
             
             # Only calculate genus for closed (watertight) meshes
-            if self.is_watertight:
+            if mesh.is_watertight:
                 # For a closed orientable surface: genus = (2 - euler_number) / 2
-                results["genus"] = int((2 - self.euler_number) / 2)
+                results["genus"] = int((2 - mesh.euler_number) / 2)
                 
                 # Sanity check - genus should be non-negative for simple shapes
                 if results["genus"] < 0:
@@ -279,12 +287,12 @@ class Mesh:
 
         # Analyze face normals
         try:
-            if hasattr(self, "face_normals") and self.face_normals is not None:
+            if hasattr(mesh, "face_normals") and mesh.face_normals is not None:
                 # Get statistics on face normal directions
                 results["normal_stats"] = {
-                    "mean": self.face_normals.mean(axis=0).tolist(),
-                    "std": self.face_normals.std(axis=0).tolist(),
-                    "sum": self.face_normals.sum(axis=0).tolist(),
+                    "mean": mesh.face_normals.mean(axis=0).tolist(),
+                    "std": mesh.face_normals.std(axis=0).tolist(),
+                    "sum": mesh.face_normals.sum(axis=0).tolist(),
                 }
                 
                 # Check if normals are predominantly pointing inward (negative volume)
@@ -298,8 +306,8 @@ class Mesh:
         
         # Check for duplicate vertices and faces
         try:
-            unique_verts = np.unique(self.vertices, axis=0)
-            results["duplicate_vertices"] = len(self.vertices) - len(unique_verts)
+            unique_verts = np.unique(mesh.vertices, axis=0)
+            results["duplicate_vertices"] = len(mesh.vertices) - len(unique_verts)
             if results["duplicate_vertices"] > 0:
                 results["issues"].append(f"Found {results['duplicate_vertices']} duplicate vertices")
         except Exception:
@@ -307,8 +315,8 @@ class Mesh:
         
         # Check for degenerate faces (zero area)
         try:
-            if hasattr(self, "area_faces"):
-                degenerate_count = np.sum(self.area_faces < 1e-8)
+            if hasattr(mesh, "area_faces"):
+                degenerate_count = np.sum(mesh.area_faces < 1e-8)
                 results["degenerate_faces"] = int(degenerate_count)
                 if degenerate_count > 0:
                     results["issues"].append(f"Found {degenerate_count} degenerate faces")
@@ -317,7 +325,7 @@ class Mesh:
         
         # Check for connected components
         try:
-            components = self.split(only_watertight=False)
+            components = mesh.split(only_watertight=False)
             results["component_count"] = len(components)
             if len(components) > 1:
                 results["issues"].append(f"Mesh has {len(components)} disconnected components")
@@ -422,12 +430,8 @@ class Mesh:
         Returns:
             Repaired mesh (new copy, original is not modified)
         """
-        # Convert to mesh object if needed and create a copy
-        if isinstance(self, tuple):
-            vertices, faces = self
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        else:
-            mesh = self.copy()  # Work on a copy
+        
+        mesh = self.to_trimesh()
 
         repair_log = []
         
@@ -532,6 +536,7 @@ class Mesh:
             else:
                 print("🔧 No repairs needed - mesh is in good condition")
 
+        self.mesh = mesh
         return mesh
 
 
@@ -549,20 +554,13 @@ class Mesh:
         Args:
             title: Plot title
             color: Mesh color (named color or RGB tuple)
-            backend: Visualization backend ('plotly', 'matplotlib', 'trimesh', or 'auto')
+            backend: Visualization backend ('plotly' or 'matplotlib')
             show_axes: Whether to show coordinate axes
             show_wireframe: Whether to show wireframe overlay
 
         Returns:
             Figure object (backend-dependent) or None if visualization fails
         """
-        # Convert to mesh object if needed
-        if isinstance(self, tuple):
-            vertices, faces = self
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        else:
-            mesh = self
-
         if backend == "auto":
             # Try plotly first, then fallback to others
             try:
@@ -575,14 +573,12 @@ class Mesh:
 
                     backend = "matplotlib"
                 except ImportError:
-                    backend = "trimesh"
+                    backend = "plotly"
 
         if backend == "plotly":
             return self._visualize_mesh_plotly(title, color, show_axes, show_wireframe)
         elif backend == "matplotlib":
             return self._visualize_mesh_matplotlib(title, color, show_axes, show_wireframe)
-        elif backend == "trimesh":
-            return self._visualize_mesh_trimesh(title, color)
         else:
             raise ValueError(f"Unknown backend: {backend}")
 
@@ -592,8 +588,8 @@ class Mesh:
         try:
             import plotly.graph_objects as go
 
-            vertices = self.vertices
-            faces = self.faces
+            vertices = self.mesh.vertices
+            faces = self.mesh.faces
 
             # Create mesh trace
             mesh_trace = go.Mesh3d(
@@ -673,8 +669,8 @@ class Mesh:
             fig = plt.figure(figsize=(10, 8))
             ax = fig.add_subplot(111, projection="3d")
 
-            vertices = self.vertices
-            faces = self.faces
+            vertices = self.mesh.vertices
+            faces = self.mesh.faces
 
             # Create mesh surface
             poly3d = Poly3DCollection(
@@ -682,7 +678,6 @@ class Mesh:
             )
             ax.add_collection3d(poly3d)
 
-            # Set equal aspect ratio
             ax.set_xlim(vertices[:, 0].min(), vertices[:, 0].max())
             ax.set_ylim(vertices[:, 1].min(), vertices[:, 1].max())
             ax.set_zlim(vertices[:, 2].min(), vertices[:, 2].max())
@@ -704,53 +699,6 @@ class Mesh:
         except Exception as e:
             print(f"Matplotlib visualization failed: {e}")
             return None
-
-
-    def _visualize_mesh_trimesh(self, title, color):
-        """Trimesh-based mesh visualization."""
-        try:
-            # Create a copy for visualization
-            viz_mesh = self.copy()
-
-            # Set mesh color
-            if color:
-                # Convert color name to RGB if needed
-                color_map = {
-                    "lightblue": [173, 216, 230],
-                    "orange": [255, 165, 0],
-                    "lightgreen": [144, 238, 144],
-                    "lightcoral": [240, 128, 128],
-                    "purple": [128, 0, 128],
-                    "red": [255, 0, 0],
-                    "blue": [0, 0, 255],
-                    "green": [0, 255, 0],
-                    "yellow": [255, 255, 0],
-                    "pink": [255, 192, 203],
-                    "cyan": [0, 255, 255],
-                }
-
-                if color in color_map:
-                    rgb_color = color_map[color]
-                else:
-                    # Default to light blue if color not found
-                    rgb_color = [173, 216, 230]
-
-                # Set visual properties
-                if hasattr(viz_mesh, "visual") and hasattr(viz_mesh.visual, "face_colors"):
-                    viz_mesh.visual.face_colors = rgb_color + [255]  # RGBA
-
-            # Create scene with the mesh
-            scene = trimesh.Scene([viz_mesh])
-
-            # Set scene metadata
-            scene.metadata["title"] = title
-
-            return scene.show()
-
-        except Exception as e:
-            print(f"Trimesh visualization failed: {e}")
-            return None
-
 
 
     def visualize_mesh_slice_interactive(
@@ -787,12 +735,7 @@ class Mesh:
             print("Plotly is required for interactive visualization")
             return None
             
-        # Convert input to trimesh object if needed
-        if isinstance(self, tuple):
-            vertices, faces = self
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        else:
-            mesh = self.copy()
+        mesh = self.mesh
         
         # Determine z-range if not provided
         if z_range is None:
@@ -988,17 +931,7 @@ class Mesh:
             print("Plotly not available for slice grid visualization")
             return None
 
-        # Handle different input formats
-        if self is not None:
-            if isinstance(self, tuple):
-                vertices, faces = self
-                mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-            else:
-                mesh = self
-        elif vertices is not None and faces is not None:
-            mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-        else:
-            raise ValueError("Must provide either mesh_data or both vertices and faces")
+        mesh = self.mesh
 
         # Determine grid size
         grid_size = int(math.sqrt(num_slices))

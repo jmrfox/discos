@@ -10,16 +10,7 @@ __author__ = "Jordan M. R. Fox"
 __email__ = "jordanmrfox@gmail.com"
 
 # Mesh functions (primary 3D representation)
-from .mesh import (
-    MeshProcessor,
-    visualize_mesh_3d,
-    analyze_mesh,
-    print_mesh_analysis,
-    repair_mesh,
-    preprocess_mesh,
-    visualize_mesh_slice_interactive,
-    visualize_mesh_slice_grid,
-)
+from .mesh import MeshManager
 
 # Segmentation functions
 from .segmentation import MeshSegmenter, Segment, SegmentGraph
@@ -34,8 +25,6 @@ from .demos import (
 )
 
 # Core modules and functionality
-# Note: slicer, regions, and graph modules moved to dev_storage/old_modules
-# The current approach uses MeshSegmenter for 3D mesh segmentation
 from .ode import ODESystem
 from .simulation import Simulator
 
@@ -44,14 +33,10 @@ from .utils import data_path
 
 __all__ = [
     # Mesh processing (primary 3D representation)
-    "MeshProcessor",
+    "MeshManager",
     "MeshSegmenter",
-    "visualize_mesh_3d",
-    "analyze_mesh",
-    "repair_mesh",
-    "preprocess_mesh",
-    "visualize_mesh_slice_interactive",
-    "visualize_mesh_slice_grid",
+    "Segment",
+    "SegmentGraph",
     # Demo mesh functions
     "create_cylinder_mesh",
     "create_torus_mesh",
@@ -59,9 +44,6 @@ __all__ = [
     "create_demo_neuron_mesh",
     "save_demo_meshes",
     # Core modules
-    # Note: ZAxisSlicer, RegionDetector, GraphBuilder moved to dev_storage/old_modules
-    "MeshSegmenter",
-    "Segment",
     "ODESystem",
     "Simulator",
     # Utility functions

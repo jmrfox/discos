@@ -96,7 +96,7 @@ class SegmentGraph(nx.Graph):
                  save_path: str = None,
                  figsize: tuple = (12, 10),
                  node_scale: float = 1000.0,
-                 repulsion_strength: float = 0.1,
+                 repulsion_strength: float = 0.0,
                  iterations: int = 100,
                  x_weight: float = 0.5,
                  y_weight: float = 0.5) -> Any:
@@ -140,7 +140,7 @@ class SegmentGraph(nx.Graph):
             z_levels = {}  # Track z-levels for each node
             
             # First pass: collect z-levels and initial positions
-            for node, data in self.graph.nodes(data=True):
+            for node, data in self.nodes(data=True):
                 # Get centroid with better error handling
                 centroid = data.get('centroid', None)
                 if centroid is None:
@@ -209,9 +209,9 @@ class SegmentGraph(nx.Graph):
                     for _ in range(iterations):
                         # Calculate repulsive forces for each node
                         forces = {}
-                        for node1 in self.graph.nodes():
+                        for node1 in self.nodes():
                             force = np.zeros(2)
-                            for node2 in self.graph.nodes():
+                            for node2 in self.nodes():
                                 if node1 != node2:
                                     diff = pos[node1] - pos[node2]
                                     dist = np.linalg.norm(diff)
@@ -249,18 +249,18 @@ class SegmentGraph(nx.Graph):
                         pos[node] = pos[node] * range_pos + min_pos
             
             # Node colors based on specified property
-            if color_by in nx.get_node_attributes(self.graph, color_by):
-                property_values = list(nx.get_node_attributes(self.graph, color_by).values())
+            if color_by in nx.get_node_attributes(self, color_by):
+                property_values = list(nx.get_node_attributes(self, color_by).values())
                 node_colors = property_values
                 cmap = cm.viridis
             else:
                 # Default: color by slice_index
-                slice_indices = [data.get('slice_index', 0) for _, data in self.graph.nodes(data=True)]
+                slice_indices = [data.get('slice_index', 0) for _, data in self.nodes(data=True)]
                 node_colors = slice_indices
                 cmap = cm.viridis
             
             # Node sizes based on volume with better scaling
-            volumes = [data.get('volume', 1.0) for _, data in self.graph.nodes(data=True)]
+            volumes = [data.get('volume', 1.0) for _, data in self.nodes(data=True)]
             if volumes:
                 # Scale volumes for better visualization
                 min_vol = min(volumes) if min(volumes) > 0 else 1e-6
@@ -284,7 +284,7 @@ class SegmentGraph(nx.Graph):
             
             # Draw the graph
             nx.draw_networkx(
-                self.graph, 
+                self, 
                 pos=pos,
                 node_color=node_colors,
                 cmap=cmap,
@@ -590,11 +590,11 @@ class MeshSegmenter:
     def _build_graph(self):
         """Step 3: Build graph based on shared cross-section boundaries."""
         # Clear any existing graph data but keep the SegmentGraph instance
-        self.graph.graph.clear()
+        self.graph.clear()
         
         # Add all segments as nodes with their properties
         for segment in self.segments:
-            self.graph.graph.add_node(
+            self.graph.add_node(
                 segment.id,
                 segment=segment,
                 volume=segment.volume,
@@ -623,12 +623,12 @@ class MeshSegmenter:
             if len(segments_at_cut) > 1:
                 connections = self._find_shared_boundary_connections(segments_at_cut, z_position)
                 for seg1_id, seg2_id in connections:
-                    if not self.graph.graph.has_edge(seg1_id, seg2_id):
-                        self.graph.graph.add_edge(seg1_id, seg2_id)
+                    if not self.graph.has_edge(seg1_id, seg2_id):
+                        self.graph.add_edge(seg1_id, seg2_id)
                         connections_found += 1
                         print(f"  Connected {seg1_id} ↔ {seg2_id}")
 
-        print(f"✅ Built connectivity graph: {len(self.graph.graph.nodes)} nodes, " f"{connections_found} edges")
+        print(f"✅ Built connectivity graph: {len(self.graph.nodes)} nodes, " f"{connections_found} edges")
         
         # Update the segments list in the SegmentGraph instance
         self.graph.segments = self.segments
@@ -804,7 +804,7 @@ class MeshSegmenter:
         Returns:
             SegmentGraph: A graph representation of the segmented structure
         """
-        if not self.segments or self.graph.graph.number_of_nodes() == 0:
+        if not self.segments or self.graph.number_of_nodes() == 0:
             raise ValueError("Must run segment_mesh before getting segment graph")
             
         return self.graph
@@ -825,7 +825,7 @@ class MeshSegmenter:
             },
             "connectivity_stats": {
                 "num_components": len(self.get_connected_components()) if self.graph else 0,
-                "num_edges": len(self.graph.graph.edges) if self.graph else 0,
+                "num_edges": len(self.graph.edges) if self.graph else 0,
             },
         }
 
