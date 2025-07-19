@@ -69,11 +69,11 @@ class SegmentGraph(nx.Graph):
             segment_id: ID of the segment to update
             properties: Dictionary of properties to set
         """
-        if segment_id not in self.graph:
+        if segment_id not in self.nodes:
             raise ValueError(f"Segment {segment_id} not found in graph")
             
         for key, value in properties.items():
-            self.graph.nodes[segment_id][key] = value
+            self.nodes[segment_id][key] = value
             
     def get_segment_properties(self, segment_id: str) -> Dict[str, Any]:
         """
@@ -85,10 +85,10 @@ class SegmentGraph(nx.Graph):
         Returns:
             Dictionary of segment properties
         """
-        if segment_id not in self.graph:
+        if segment_id not in self.nodes:
             raise ValueError(f"Segment {segment_id} not found in graph")
             
-        return dict(self.graph.nodes[segment_id])
+        return dict(self.nodes[segment_id])
     
     def visualize(self, 
                  color_by: str = 'slice_index', 

@@ -18,7 +18,7 @@ class ODESystem:
 
     def __init__(self, graph):
         self.graph = graph
-        self.compartment_ids = list(graph.compartments.keys())
+        self.compartment_ids = list(graph.nodes())
         self.num_compartments = len(self.compartment_ids)
         self.id_to_index = {comp_id: i for i, comp_id in enumerate(self.compartment_ids)}
 
@@ -44,6 +44,47 @@ class ODESystem:
     def set_parameters(self, **params):
         """Set biophysical parameters."""
         self.default_params.update(params)
+    
+    def __str__(self) -> str:
+        """String representation of ODESystem."""
+        return f"ODESystem({self.num_compartments} compartments, {len(self.stimuli)} stimuli)"
+    
+    def __repr__(self) -> str:
+        """Detailed representation of ODESystem."""
+        return self.__str__()
+    
+    def print_summary(self) -> None:
+        """Print a detailed summary of the ODE system."""
+        print(f"🧠 ODESystem Summary")
+        print(f"   Compartments: {self.num_compartments}")
+        print(f"   State variables: {self.state_size} (4 per compartment: V, m, h, n)")
+        print(f"   Stimuli: {len(self.stimuli)}")
+        print(f"   Graph edges: {len(self.graph.edges())}")
+        
+        print(f"\n📊 Biophysical Parameters:")
+        for param, value in self.default_params.items():
+            print(f"   {param}: {value}")
+        
+        if self.stimuli:
+            print(f"\n⚡ Stimuli:")
+            for i, stim in enumerate(self.stimuli):
+                print(f"   {i+1}. {stim['compartment_id']}: {stim['amplitude']} {stim['type']} from {stim['start_time']}-{stim['end_time']} ms")
+    
+    def get_compartment_info(self, compartment_id: str) -> Dict[str, Any]:
+        """Get information about a specific compartment."""
+        if compartment_id not in self.compartment_ids:
+            raise ValueError(f"Compartment {compartment_id} not found")
+        
+        # Get properties from the graph node
+        props = dict(self.graph.nodes[compartment_id])
+        
+        # Add computed properties
+        neighbors = list(self.graph.neighbors(compartment_id))
+        props['neighbors'] = neighbors
+        props['num_neighbors'] = len(neighbors)
+        props['index'] = self.id_to_index[compartment_id]
+        
+        return props
 
     def add_stimulus(
         self, compartment_id: str, start_time: float, duration: float, amplitude: float, stimulus_type: str = "current"
@@ -81,10 +122,12 @@ class ODESystem:
 
         # Set initial voltages
         for i, comp_id in enumerate(self.compartment_ids):
-            compartment = self.neuron.get_compartment(comp_id)
-            y0[i] = compartment.membrane_potential
+            # Get membrane potential from graph node properties, default to -65 mV if not set
+            node_props = self.graph.nodes[comp_id]
+            membrane_potential = node_props.get('membrane_potential', -65.0)
+            y0[i] = membrane_potential
             if verbose:
-                print(f"     Compartment {comp_id}: V₀ = {compartment.membrane_potential:.1f} mV")
+                print(f"     Compartment {comp_id}: V₀ = {membrane_potential:.1f} mV")
 
         # Set initial gating variables (steady-state at rest)
         v_rest = -65.0  # mV
@@ -142,7 +185,9 @@ class ODESystem:
 
         # Compute voltage derivatives (cable equation)
         for i, comp_id in enumerate(self.compartment_ids):
-            compartment = self.neuron.get_compartment(comp_id)
+            # Get compartment properties from graph node
+            node_props = self.graph.nodes[comp_id]
+            area = node_props.get('external_surface_area', 1.0)  # Default area if not specified
 
             # Membrane currents
             V = voltages[i]
@@ -159,9 +204,9 @@ class ODESystem:
 
             try:
                 # Ionic currents (Hodgkin-Huxley)
-                I_Na = self._sodium_current(V, m, h, compartment.area)
-                I_K = self._potassium_current(V, n, compartment.area)
-                I_leak = self._leak_current(V, compartment.area)
+                I_Na = self._sodium_current(V, m, h, area)
+                I_K = self._potassium_current(V, n, area)
+                I_leak = self._leak_current(V, area)
                 I_ion = I_Na + I_K + I_leak
 
                 # Check for extreme currents
@@ -170,11 +215,13 @@ class ODESystem:
 
                 # Axial currents from neighboring compartments
                 I_axial = 0.0
-                neighbors = self.neuron.compartment_graph.get_neighbors(comp_id)
+                neighbors = list(self.graph.neighbors(comp_id))
                 for neighbor_id in neighbors:
                     neighbor_idx = self.id_to_index[neighbor_id]
                     V_neighbor = voltages[neighbor_idx]
-                    conductance = self.neuron.compartment_graph.get_connection_conductance(comp_id, neighbor_id)
+                    # Default conductance if not specified in edge data
+                    edge_data = self.graph.get_edge_data(comp_id, neighbor_id, {})
+                    conductance = edge_data.get('conductance', 1e-6)  # Default conductance in S
                     # Convert conductance to appropriate units if needed
                     I_axial += (
                         conductance * (V_neighbor - V) * 1000
@@ -186,7 +233,7 @@ class ODESystem:
                 # Convert area to cm²: μm² × 1e-8
                 # Convert capacitance: μF/cm² × cm² = μF = 1e-6 F
                 # Final capacitance in pF: μF × 1e6 = pF
-                capacitance = self.default_params["capacitance"] * compartment.area * 1e-2  # pF
+                capacitance = self.default_params["capacitance"] * area * 1e-2  # pF
 
                 if capacitance <= 0:
                     print(f"⚠️  WARNING: Zero or negative capacitance for compartment {comp_id}")
@@ -386,20 +433,10 @@ class ODESystem:
             # For multi-compartment systems, check connectivity
             import networkx as nx
 
-            # Create a networkx graph from the compartment graph
-            G = nx.Graph()
-            G.add_nodes_from(self.compartment_ids)
-
-            # Add edges
-            for comp_id in self.compartment_ids:
-                neighbors = self.neuron.compartment_graph.get_neighbors(comp_id)
-                for neighbor_id in neighbors:
-                    G.add_edge(comp_id, neighbor_id)
-
-            # Check if graph is connected
-            if not nx.is_connected(G):
-                num_components = nx.number_connected_components(G)
-                components = list(nx.connected_components(G))
+            # The graph is already a NetworkX graph, so we can check connectivity directly
+            if not nx.is_connected(self.graph):
+                num_components = nx.number_connected_components(self.graph)
+                components = list(nx.connected_components(self.graph))
                 issues["errors"].append(
                     f"Graph has {num_components} disconnected components. "
                     f"All compartments must be connected. Components: {[list(comp) for comp in components]}"
@@ -408,8 +445,9 @@ class ODESystem:
         # Check for very small compartments
         small_comps = []
         for comp_id in self.compartment_ids:
-            comp = self.neuron.get_compartment(comp_id)
-            if comp is not None and comp.area < 0.01:  # µm²
+            node_props = self.graph.nodes[comp_id]
+            area = node_props.get('external_surface_area', 1.0)
+            if area < 0.01:  # µm²
                 small_comps.append(comp_id)
 
         if small_comps:
@@ -421,3 +459,144 @@ class ODESystem:
                 issues["errors"].append(f"Stimulus targets non-existent compartment: {stimulus['compartment_id']}")
 
         return issues
+    
+    def solve_forward_euler(self, t_span: Tuple[float, float], dt: float = 0.01, 
+                           verbose: bool = False) -> Dict[str, Any]:
+        """
+        Solve the ODE system using forward Euler method.
+        
+        Args:
+            t_span: Time span (t_start, t_end) in ms
+            dt: Time step in ms
+            verbose: Print progress information
+            
+        Returns:
+            Dictionary containing solution data
+        """
+        t_start, t_end = t_span
+        t_points = np.arange(t_start, t_end + dt, dt)
+        n_points = len(t_points)
+        
+        if verbose:
+            print(f"🔄 Forward Euler solver")
+            print(f"   Time span: {t_start} to {t_end} ms")
+            print(f"   Time step: {dt} ms")
+            print(f"   Total points: {n_points}")
+        
+        # Initialize solution arrays
+        y_solution = np.zeros((n_points, self.state_size))
+        y_solution[0] = self.get_initial_conditions(verbose=verbose)
+        
+        # Forward Euler integration
+        for i in range(n_points - 1):
+            t = t_points[i]
+            y = y_solution[i]
+            
+            # Compute derivative
+            dydt = self.ode_function(t, y)
+            
+            # Forward Euler step: y_{n+1} = y_n + dt * f(t_n, y_n)
+            y_solution[i + 1] = y + dt * dydt
+            
+            if verbose and (i + 1) % max(1, n_points // 10) == 0:
+                progress = (i + 1) / n_points * 100
+                print(f"   Progress: {progress:.1f}%")
+        
+        # Extract voltages and gating variables
+        voltages = y_solution[:, :self.num_compartments]
+        gating_vars = y_solution[:, self.num_compartments:].reshape(n_points, self.num_compartments, 3)
+        
+        result = {
+            'method': 'forward_euler',
+            't': t_points,
+            'y': y_solution,
+            'voltages': voltages,
+            'gating_variables': gating_vars,
+            'compartment_ids': self.compartment_ids,
+            'success': True,
+            'message': f'Forward Euler integration completed with {n_points} points'
+        }
+        
+        if verbose:
+            print(f"✅ Integration completed successfully")
+            print(f"   Final time: {t_points[-1]:.3f} ms")
+            print(f"   Voltage range: {voltages.min():.1f} to {voltages.max():.1f} mV")
+        
+        return result
+    
+    def solve_scipy(self, t_span: Tuple[float, float], method: str = 'RK45', 
+                   max_step: float = 0.1, rtol: float = 1e-6, atol: float = 1e-9,
+                   verbose: bool = False) -> Dict[str, Any]:
+        """
+        Solve the ODE system using scipy.integrate.solve_ivp.
+        
+        Args:
+            t_span: Time span (t_start, t_end) in ms
+            method: Integration method ('RK45', 'DOP853', 'Radau', etc.)
+            max_step: Maximum step size in ms
+            rtol: Relative tolerance
+            atol: Absolute tolerance
+            verbose: Print progress information
+            
+        Returns:
+            Dictionary containing solution data
+        """
+        if verbose:
+            print(f"🔄 SciPy solver ({method})")
+            print(f"   Time span: {t_span[0]} to {t_span[1]} ms")
+            print(f"   Max step: {max_step} ms")
+            print(f"   Tolerances: rtol={rtol}, atol={atol}")
+        
+        y0 = self.get_initial_conditions(verbose=verbose)
+        
+        # Solve using scipy
+        sol = solve_ivp(
+            self.ode_function, 
+            t_span, 
+            y0, 
+            method=method,
+            max_step=max_step,
+            rtol=rtol,
+            atol=atol,
+            dense_output=True
+        )
+        
+        if not sol.success:
+            if verbose:
+                print(f"❌ Integration failed: {sol.message}")
+            return {
+                'method': method,
+                'success': False,
+                'message': sol.message
+            }
+        
+        # Extract solution
+        t_points = sol.t
+        y_solution = sol.y.T  # Transpose to match forward_euler format
+        n_points = len(t_points)
+        
+        # Extract voltages and gating variables
+        voltages = y_solution[:, :self.num_compartments]
+        gating_vars = y_solution[:, self.num_compartments:].reshape(n_points, self.num_compartments, 3)
+        
+        result = {
+            'method': method,
+            't': t_points,
+            'y': y_solution,
+            'voltages': voltages,
+            'gating_variables': gating_vars,
+            'compartment_ids': self.compartment_ids,
+            'success': True,
+            'message': sol.message,
+            'nfev': sol.nfev,  # Number of function evaluations
+            'njev': sol.njev,  # Number of Jacobian evaluations
+            'nlu': sol.nlu     # Number of LU decompositions
+        }
+        
+        if verbose:
+            print(f"✅ Integration completed successfully")
+            print(f"   Final time: {t_points[-1]:.3f} ms")
+            print(f"   Function evaluations: {sol.nfev}")
+            print(f"   Voltage range: {voltages.min():.1f} to {voltages.max():.1f} mV")
+        
+        return result
