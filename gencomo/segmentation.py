@@ -350,6 +350,10 @@ class MeshSegmenter:
         Returns:
             List[Segment] or SegmentGraph: List of segments or a SegmentGraph instance if return_segment_graph=True
         """
+        # Validate slice_height
+        if slice_height <= 0:
+            raise ValueError(f"slice_height must be positive, got {slice_height}")
+        
         self.original_mesh = mesh.copy()
         self.slice_height = slice_height
         self.segments = []
@@ -502,7 +506,14 @@ class MeshSegmenter:
                 if ext_area <= 0:
                     warnings.warn(f"Segment {segment_id} has zero external surface area")
                 if int_area <= 0:
-                    warnings.warn(f"Segment {segment_id} has zero internal surface area")
+                    # Check if this is a single segment representing the entire mesh
+                    # (no actual slicing occurred, so zero internal surface area is expected)
+                    is_whole_mesh = (
+                        len(self.cross_sections) == 0 and  # No cross-sections were created (no cuts made)
+                        abs(component.volume - self.original_mesh.volume) / self.original_mesh.volume < 0.05  # Volume is ~same as original (5% tolerance)
+                    )
+                    if not is_whole_mesh:
+                        warnings.warn(f"Segment {segment_id} has zero internal surface area")
 
         print(f"✅ Extracted {len(self.segments)} total segments across {len(self.slices)} slices")
 

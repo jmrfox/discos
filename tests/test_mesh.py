@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from gencomo.demos import create_cylinder_mesh
+from gencomo.demos import create_cylinder_mesh, create_torus_mesh
 from gencomo.mesh import MeshManager
 
 
@@ -69,6 +69,80 @@ class TestCreateCylinderMesh:
             assert isinstance(mesh, trimesh.Trimesh)
 
 
+class TestCreateTorusMesh:
+    """Test the create_torus_mesh function."""
+    
+    def test_create_torus_basic(self):
+        """Test basic torus creation with default parameters."""
+        mesh = create_torus_mesh()
+        
+        # Check that we get a trimesh object
+        assert isinstance(mesh, trimesh.Trimesh)
+        
+        # Check that mesh has vertices and faces
+        assert len(mesh.vertices) > 0
+        assert len(mesh.faces) > 0
+        
+        # Check metadata
+        assert mesh.metadata["morphology_type"] == "torus"
+        assert mesh.metadata["major_radius"] == 20.0  # default
+        assert mesh.metadata["minor_radius"] == 5.0   # default
+        
+    def test_create_torus_custom_params(self):
+        """Test torus creation with custom parameters."""
+        major_radius = 15.0
+        minor_radius = 3.0
+        major_segments = 24
+        minor_segments = 16
+        center = (1.0, 2.0, 3.0)
+        axis = "y"
+        
+        mesh = create_torus_mesh(
+            major_radius=major_radius,
+            minor_radius=minor_radius,
+            major_segments=major_segments,
+            minor_segments=minor_segments,
+            center=center,
+            axis=axis
+        )
+        
+        # Check metadata reflects custom parameters
+        assert mesh.metadata["major_radius"] == major_radius
+        assert mesh.metadata["minor_radius"] == minor_radius
+        assert mesh.metadata["center"] == center
+        assert mesh.metadata["axis"] == axis
+        
+        # Check theoretical volume calculation
+        expected_volume = 2 * np.pi**2 * major_radius * minor_radius**2
+        assert abs(mesh.metadata["volume_theoretical"] - expected_volume) < 1e-10
+        
+        # Check theoretical surface area calculation
+        expected_surface_area = 4 * np.pi**2 * major_radius * minor_radius
+        assert abs(mesh.metadata["surface_area_theoretical"] - expected_surface_area) < 1e-10
+        
+    def test_create_torus_different_axes(self):
+        """Test torus creation along different axes."""
+        for axis in ["x", "y", "z"]:
+            mesh = create_torus_mesh(axis=axis)
+            assert mesh.metadata["axis"] == axis
+            assert isinstance(mesh, trimesh.Trimesh)
+            
+    def test_create_torus_different_segments(self):
+        """Test torus creation with different segment counts."""
+        segment_configs = [
+            {"major_segments": 12, "minor_segments": 8},
+            {"major_segments": 20, "minor_segments": 12},
+            {"major_segments": 32, "minor_segments": 16},
+        ]
+        
+        for config in segment_configs:
+            mesh = create_torus_mesh(**config)
+            assert isinstance(mesh, trimesh.Trimesh)
+            # More segments should generally result in more vertices
+            assert len(mesh.vertices) > 0
+            assert len(mesh.faces) > 0
+
+
 class TestMeshManager:
     """Test the MeshManager class."""
     
@@ -78,9 +152,19 @@ class TestMeshManager:
         return create_cylinder_mesh(length=20.0, radius=2.0, resolution=16)
     
     @pytest.fixture
+    def simple_torus(self):
+        """Create a simple torus mesh for testing."""
+        return create_torus_mesh(major_radius=10.0, minor_radius=2.0, major_segments=20, minor_segments=12)
+    
+    @pytest.fixture
     def mesh_manager(self, simple_cylinder):
         """Create a MeshManager instance with a simple cylinder."""
         return MeshManager(simple_cylinder, verbose=False)
+        
+    @pytest.fixture
+    def torus_manager(self, simple_torus):
+        """Create a MeshManager instance with a simple torus."""
+        return MeshManager(simple_torus, verbose=False)
     
     def test_mesh_manager_init(self, simple_cylinder):
         """Test MeshManager initialization."""
@@ -217,7 +301,7 @@ class TestMeshManager:
 
 
 class TestMeshManagerIntegration:
-    """Integration tests combining create_cylinder_mesh and MeshManager."""
+    """Integration tests combining create_cylinder_mesh, create_torus_mesh, and MeshManager."""
     
     def test_cylinder_to_manager_workflow(self):
         """Test complete workflow from cylinder creation to mesh management."""
@@ -239,6 +323,31 @@ class TestMeshManagerIntegration:
         
         # Test scaling (note: scale_mesh modifies in-place)
         original_volume = cylinder.volume
+        scaled = manager.scale_mesh(0.5)
+        # Volume should be reduced by factor^3 = 0.5^3 = 0.125
+        expected_volume = original_volume * (0.5 ** 3)
+        assert abs(scaled.volume - expected_volume) / expected_volume < 0.01
+        
+    def test_torus_to_manager_workflow(self):
+        """Test complete workflow from torus creation to mesh management."""
+        # Create torus
+        torus = create_torus_mesh(major_radius=15.0, minor_radius=3.0, major_segments=24, minor_segments=16)
+        
+        # Create manager
+        manager = MeshManager(torus, verbose=False)
+        
+        # Test analysis
+        analysis = manager.analyze_mesh()
+        assert analysis["volume"] > 0
+        assert analysis["face_count"] > 0
+        assert analysis["vertex_count"] > 0
+        
+        # Test centering
+        centered = manager.center_mesh()
+        assert np.allclose(centered.centroid, [0, 0, 0], atol=1e-10)
+        
+        # Test scaling (note: scale_mesh modifies in-place)
+        original_volume = torus.volume
         scaled = manager.scale_mesh(0.5)
         # Volume should be reduced by factor^3 = 0.5^3 = 0.125
         expected_volume = original_volume * (0.5 ** 3)
@@ -275,6 +384,66 @@ class TestMeshManagerIntegration:
             actual = manager.analyze_mesh()["volume"]
             # Allow some tolerance for mesh discretization
             assert abs(theoretical - actual) / theoretical < 0.1  # Within 10%
+            
+    def test_multiple_tori_comparison(self):
+        """Test creating and comparing multiple tori."""
+        tori = []
+        managers = []
+        
+        # Create tori with different parameters
+        params = [
+            {"major_radius": 10.0, "minor_radius": 1.0},
+            {"major_radius": 20.0, "minor_radius": 2.0},
+            {"major_radius": 30.0, "minor_radius": 3.0},
+        ]
+        
+        for param in params:
+            torus = create_torus_mesh(**param)
+            manager = MeshManager(torus, verbose=False)
+            
+            tori.append(torus)
+            managers.append(manager)
+            
+        # Verify volumes increase as expected
+        volumes = [m.analyze_mesh()["volume"] for m in managers]
+        
+        # Each subsequent torus should have larger volume
+        assert volumes[0] < volumes[1] < volumes[2]
+        
+        # Verify theoretical vs actual volumes are close
+        for i, (torus, manager) in enumerate(zip(tori, managers)):
+            theoretical = torus.metadata["volume_theoretical"]
+            actual = manager.analyze_mesh()["volume"]
+            # Allow some tolerance for mesh discretization
+            assert abs(theoretical - actual) / theoretical < 0.1  # Within 10%
+            
+    def test_mixed_mesh_types_comparison(self):
+        """Test comparing different mesh types (cylinder vs torus)."""
+        # Create meshes with similar volumes for comparison
+        cylinder = create_cylinder_mesh(length=20.0, radius=3.0, resolution=20)
+        torus = create_torus_mesh(major_radius=8.0, minor_radius=2.0, major_segments=20, minor_segments=12)
+        
+        # Create managers
+        cyl_manager = MeshManager(cylinder, verbose=False)
+        tor_manager = MeshManager(torus, verbose=False)
+        
+        # Both should analyze successfully
+        cyl_analysis = cyl_manager.analyze_mesh()
+        tor_analysis = tor_manager.analyze_mesh()
+        
+        # Both should have positive volumes
+        assert cyl_analysis["volume"] > 0
+        assert tor_analysis["volume"] > 0
+        
+        # Both should be watertight (for well-formed meshes)
+        assert cyl_analysis["is_watertight"]
+        assert tor_analysis["is_watertight"]
+        
+        # Torus should have genus 1, cylinder should have genus 0
+        if cyl_analysis.get("genus") is not None:
+            assert cyl_analysis["genus"] == 0
+        if tor_analysis.get("genus") is not None:
+            assert tor_analysis["genus"] == 1
 
 
 if __name__ == "__main__":
