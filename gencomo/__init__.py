@@ -24,6 +24,9 @@ from .demos import (
     save_demo_meshes,
 )
 
+# Parameter management system
+from .parameters import IndependentParameter, ParameterSet, DerivedParameter, ParameterBank
+
 # Core modules and functionality
 from .ode import ODESystem
 from .simulation import Simulator
@@ -43,6 +46,11 @@ __all__ = [
     "create_branching_mesh",
     "create_demo_neuron_mesh",
     "save_demo_meshes",
+    # Parameter management
+    "IndependentParameter",
+    "ParameterSet",
+    "DerivedParameter",
+    "ParameterBank",
     # Core modules
     "ODESystem",
     "Simulator",
