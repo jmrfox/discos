@@ -90,6 +90,101 @@ class SegmentGraph(nx.Graph):
             
         return dict(self.nodes[segment_id])
     
+    def export_to_swc(self, filename: str, scale_factor: float = 1.0) -> None:
+        """
+        Export the segment graph to SWC format file.
+        
+        SWC format represents neuronal morphology as a tree structure where each node
+        has: SampleID, TypeID, x, y, z, radius, ParentID
+        
+        Args:
+            filename: Output SWC file path
+            scale_factor: Scaling factor to convert units (default: 1.0 for micrometers)
+            
+        Note:
+            - All segments are exported as type 3 (dendrite) since they represent
+              compartments in a segmented mesh
+            - Radius is estimated from segment volume assuming spherical approximation
+            - Tree structure is built using NetworkX graph connectivity
+        """
+        if len(self.nodes) == 0:
+            raise ValueError("Cannot export empty graph to SWC format")
+            
+        # Build tree structure from graph using BFS to ensure proper parent-child relationships
+        import networkx as nx
+        from collections import deque
+        import math
+        
+        # Find root node (could be any node, but prefer one with minimal connections)
+        # or the one with the smallest z-coordinate (bottom of the structure)
+        root_node = min(self.nodes, key=lambda n: self.nodes[n].get('centroid', [0, 0, float('inf')])[2])
+        
+        # Build spanning tree using BFS to create parent-child relationships
+        visited = set()
+        parent_map = {root_node: -1}  # Root has parent -1
+        queue = deque([root_node])
+        visited.add(root_node)
+        
+        while queue:
+            current = queue.popleft()
+            for neighbor in self.neighbors(current):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    parent_map[neighbor] = current
+                    queue.append(neighbor)
+        
+        # Create SWC entries
+        swc_entries = []
+        node_to_sample_id = {}  # Map node IDs to SWC sample IDs
+        
+        # Assign sample IDs (1-indexed)
+        for i, node_id in enumerate(sorted(self.nodes), 1):
+            node_to_sample_id[node_id] = i
+        
+        # Generate SWC entries
+        for node_id in sorted(self.nodes):
+            node_data = self.nodes[node_id]
+            centroid = node_data.get('centroid', [0, 0, 0])
+            volume = node_data.get('volume', 0)
+            
+            # Calculate radius from volume assuming spherical approximation
+            # V = (4/3) * π * r³, so r = (3V / 4π)^(1/3)
+            radius = (3 * volume / (4 * math.pi)) ** (1/3) if volume > 0 else 1.0
+            
+            # Scale coordinates and radius
+            x = centroid[0] * scale_factor
+            y = centroid[1] * scale_factor
+            z = centroid[2] * scale_factor
+            r = radius * scale_factor
+            
+            # Determine parent sample ID
+            parent_node = parent_map.get(node_id, -1)
+            parent_sample_id = node_to_sample_id.get(parent_node, -1) if parent_node != -1 else -1
+            
+            # SWC entry: SampleID TypeID x y z radius ParentID
+            # TypeID = 3 for dendrite (representing compartments)
+            sample_id = node_to_sample_id[node_id]
+            type_id = 3  # dendrite type for compartments
+            
+            swc_entries.append(f"{sample_id} {type_id} {x:.6f} {y:.6f} {z:.6f} {r:.6f} {parent_sample_id}")
+        
+        # Write to file
+        with open(filename, 'w') as f:
+            # Write header
+            f.write("# SWC file generated from SegmentGraph\n")
+            f.write("# Format: SampleID TypeID x y z radius ParentID\n")
+            f.write("# TypeID: 3 = dendrite (representing mesh segments/compartments)\n")
+            f.write(f"# Total segments: {len(self.nodes)}\n")
+            f.write(f"# Total connections: {len(self.edges)}\n")
+            f.write(f"# Scale factor: {scale_factor}\n")
+            f.write("#\n")
+            
+            # Write data entries
+            for entry in swc_entries:
+                f.write(entry + "\n")
+        
+        print(f"✅ Exported {len(self.nodes)} segments to SWC format: {filename}")
+    
     def visualize(self, 
                  color_by: str = 'slice_index', 
                  show_plot: bool = True,
