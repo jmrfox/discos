@@ -15,6 +15,9 @@ import networkx as nx
 from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 import warnings
+import math
+import json
+from collections import deque
 
 
 @dataclass
@@ -50,7 +53,6 @@ class SWCData:
     entries: List[str]  # List of SWC entry strings
     metadata: Dict[str, Any]  # Metadata about the conversion
     non_tree_edges: List[Dict[str, Any]]  # Removed edges for cycle breaking
-    soma_segments: List[str]  # List of soma segment IDs
     root_segment: str  # Root segment ID
     scale_factor: float  # Scaling factor used
     
@@ -60,10 +62,10 @@ class SWCData:
             # Write header with metadata
             f.write("# SWC file generated from SegmentGraph for Arbor simulator\n")
             f.write("# Format: SampleID TypeID x y z radius ParentID\n")
-            f.write("# TypeID: 1=soma, 2=axon, 3=dendrite, 4=apical_dendrite\n")
+            f.write("# TypeID: 5=segment (all segments use type 5)\n")
             f.write(f"# Total segments: {self.metadata.get('total_segments', 0)}\n")
             f.write(f"# Tree connections: {len(self.entries) - 1}\n")  # -1 for root
-            f.write(f"# Soma segments: {len(self.soma_segments)}\n")
+            # No soma segments in simplified approach
             f.write(f"# Scale factor: {self.scale_factor}\n")
             f.write("# Generated for Arbor compatibility with cycle breaking\n")
             f.write("#\n")
@@ -100,7 +102,7 @@ class SWCData:
         # Also create a companion JSON file with connection information
         if self.non_tree_edges:
             connections_file = filename.replace('.swc', '_connections.json')
-            import json
+            # Use top-level import
             
             connections_data = {
                 'metadata': self.metadata,
@@ -118,7 +120,7 @@ class SWCData:
         """Get a summary of the SWC data."""
         summary = f"SWC Data Summary:\n"
         summary += f"  - Total segments: {self.metadata.get('total_segments', 0)}\n"
-        summary += f"  - Soma segments: {len(self.soma_segments)}\n"
+        # No soma segments in simplified approach
         summary += f"  - Root segment: {self.root_segment}\n"
         summary += f"  - Tree edges: {len(self.entries) - 1}\n"
         summary += f"  - Non-tree edges: {len(self.non_tree_edges)}\n"
@@ -175,9 +177,27 @@ class SegmentGraph(nx.Graph):
             
         return dict(self.nodes[segment_id])
     
+    def _build_tree_adjacency_list(self, tree_edges: set) -> dict:
+        """
+        Build adjacency list from tree edges.
+        
+        Args:
+            tree_edges: Set of edges forming the spanning tree
+            
+        Returns:
+            Dictionary mapping each node to its neighbors in the tree
+        """
+        tree_adj = {}
+        for u, v in tree_edges:
+            if u not in tree_adj:
+                tree_adj[u] = []
+            if v not in tree_adj:
+                tree_adj[v] = []
+            tree_adj[u].append(v)
+            tree_adj[v].append(u)
+        return tree_adj
+    
     def export_to_swc(self, scale_factor: float = 1.0, 
-                      soma_threshold_volume: float = None, 
-                      classify_types: bool = True,
                       cycle_breaking_strategy: str = 'minimum_spanning_tree') -> 'SWCData':
         """
         Export the segment graph to SWC format data compatible with Arbor simulator.
@@ -190,51 +210,41 @@ class SegmentGraph(nx.Graph):
         
         Args:
             scale_factor: Scaling factor to convert units (default: 1.0 for micrometers)
-            soma_threshold_volume: Volume threshold for soma classification (auto-detect if None)
-            classify_types: Whether to classify segment types (soma, dendrite, etc.)
             cycle_breaking_strategy: Strategy for breaking cycles ('minimum_spanning_tree', 'bfs_tree')
             
         Returns:
             SWCData object containing the SWC entries and metadata
             
         Note:
-            - Arbor requires soma to have 2+ samples (not single point)
-            - Segments are classified as soma (1), axon (2), dendrite (3), or apical dendrite (4)
+            - All segments use type ID 5 (custom segment type)
             - Tree structure ensures proper parent-child relationships for Arbor compatibility
-            - All Arbor validation checks are performed
             - Cycles are broken and non-tree edges are annotated for post-processing
         """
         if len(self.nodes) == 0:
             raise ValueError("Cannot export empty graph to SWC format")
-            
-        import networkx as nx
-        from collections import deque
-        import math
         
-        # Step 1: Identify soma segments (largest volume segments, typically at bottom)
-        soma_segments = self._identify_soma_segments(soma_threshold_volume) if classify_types else set()
+        # Step 1: Find root node (segment with smallest z-coordinate)
+        root_node = min(self.nodes, key=lambda n: self.nodes[n].get('centroid', [0, 0, float('inf')])[2])
         
-        # Step 2: Find appropriate root node for tree structure
-        # Prefer soma segments, otherwise use segment with smallest z-coordinate
-        if soma_segments:
-            root_node = min(soma_segments, key=lambda n: self.nodes[n].get('centroid', [0, 0, float('inf')])[2])
-        else:
-            root_node = min(self.nodes, key=lambda n: self.nodes[n].get('centroid', [0, 0, float('inf')])[2])
-        
-        # Step 3: Break cycles by creating spanning tree and identify non-tree edges
+        # Step 2: Break cycles by creating spanning tree and identify non-tree edges
         tree_edges, non_tree_edges = self._break_cycles_and_create_tree(root_node, cycle_breaking_strategy)
         
-        # Step 4: Build parent-child relationships from spanning tree
+        # Step 3: Build parent-child relationships from spanning tree
         parent_map = self._build_parent_map_from_tree(tree_edges, root_node)
         
-        # Step 5: Assign sample IDs ensuring parent IDs < child IDs (Arbor requirement)
+        # Step 4: Assign sample IDs ensuring parent IDs < child IDs (Arbor requirement)
         node_to_sample_id = self._assign_sample_ids_bfs(root_node, tree_edges)
         
-        # Step 6: Generate SWC entries with proper type classification
+        # Step 5: Generate SWC entries with type 5 for all segments
         swc_entries = []
         
         for node_id in sorted(node_to_sample_id.keys(), key=lambda x: node_to_sample_id[x]):
             node_data = self.nodes[node_id]
+            
+            # Validate that node has centroid data
+            if 'centroid' not in node_data:
+                raise ValueError(f"Node {node_id} has no centroid data")
+            
             centroid = node_data.get('centroid', [0, 0, 0])
             volume = node_data.get('volume', 0)
             
@@ -252,25 +262,18 @@ class SegmentGraph(nx.Graph):
             parent_node = parent_map.get(node_id, -1)
             parent_sample_id = node_to_sample_id.get(parent_node, -1) if parent_node != -1 else -1
             
-            # Classify segment type
-            if classify_types:
-                type_id = self._classify_segment_type(node_id, soma_segments, parent_node, node_data)
-            else:
-                type_id = 3  # Default to dendrite
+            # Use type 5 for all segments
+            type_id = 5
             
             # SWC entry: SampleID TypeID x y z radius ParentID
             sample_id_val = node_to_sample_id[node_id]
             
             swc_entries.append(f"{sample_id_val} {type_id} {x:.6f} {y:.6f} {z:.6f} {r:.6f} {parent_sample_id}")
         
-        # Step 7: Validate Arbor requirements
-        self._validate_swc_for_arbor(swc_entries, soma_segments, node_to_sample_id)
-        
-        # Step 8: Create SWCData object with all information
+        # Step 6: Create SWCData object with streamlined metadata
         metadata = {
-            'original_graph_nodes': len(self.nodes),
-            'original_graph_edges': len(self.edges()),
             'total_segments': len(self.nodes),
+            'total_edges': len(self.edges()),
             'tree_edges': len(tree_edges),
             'non_tree_edges': len(non_tree_edges),
             'cycle_breaking_strategy': cycle_breaking_strategy
@@ -293,13 +296,12 @@ class SegmentGraph(nx.Graph):
             entries=swc_entries,
             metadata=metadata,
             non_tree_edges=formatted_non_tree_edges,
-            soma_segments=list(soma_segments),
             root_segment=root_node,
             scale_factor=scale_factor
         )
         
         print(f"✅ Generated SWC data for {len(self.nodes)} segments")
-        print(f"   - Soma segments: {len(soma_segments)}")
+        print(f"   - All segments use type ID 5")
         print(f"   - Root segment: {root_node} (sample ID: {node_to_sample_id[root_node]})")
         print(f"   - Tree edges: {len(tree_edges)}")
         print(f"   - Non-tree edges (annotated): {len(non_tree_edges)}")
@@ -321,7 +323,7 @@ class SegmentGraph(nx.Graph):
             - tree_edges: Set of edges forming the spanning tree
             - non_tree_edges: Set of edges removed to break cycles
         """
-        import networkx as nx
+        # Use top-level imports
         
         if strategy == 'minimum_spanning_tree':
             # Use minimum spanning tree based on edge weights (distance between centroids)
@@ -371,17 +373,8 @@ class SegmentGraph(nx.Graph):
         Returns:
             Dictionary mapping each node to its parent (root maps to -1)
         """
-        from collections import deque
-        
         # Build adjacency list from tree edges
-        tree_adj = {}
-        for u, v in tree_edges:
-            if u not in tree_adj:
-                tree_adj[u] = []
-            if v not in tree_adj:
-                tree_adj[v] = []
-            tree_adj[u].append(v)
-            tree_adj[v].append(u)
+        tree_adj = self._build_tree_adjacency_list(tree_edges)
         
         # BFS to establish parent-child relationships
         parent_map = {root_node: -1}
@@ -409,17 +402,8 @@ class SegmentGraph(nx.Graph):
         Returns:
             Dictionary mapping node IDs to sample IDs
         """
-        from collections import deque
-        
         # Build adjacency list from tree edges
-        tree_adj = {}
-        for u, v in tree_edges:
-            if u not in tree_adj:
-                tree_adj[u] = []
-            if v not in tree_adj:
-                tree_adj[v] = []
-            tree_adj[u].append(v)
-            tree_adj[v].append(u)
+        tree_adj = self._build_tree_adjacency_list(tree_edges)
         
         # BFS assignment ensures parent IDs are assigned before child IDs
         node_to_sample_id = {}
