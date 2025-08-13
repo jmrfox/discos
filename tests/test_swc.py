@@ -176,7 +176,7 @@ class TestSegmentGraphSWCExport:
                           centroid=np.array([i, 0.0, i * 0.5]),
                           volume=5.0 + i,
                           slice_index=i // 2)
-        
+         
         # Add edges to create a cycle
         graph.add_edge('seg_0', 'seg_1')
         graph.add_edge('seg_1', 'seg_2')
