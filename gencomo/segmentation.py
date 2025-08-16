@@ -140,6 +140,8 @@ class SegmentGraph(nx.Graph):
     segments based on their position and connectivity.
 
     Each node represents a segment, and each edge is a connectivity between segments.
+
+    Note that this graph is allowed to have cycles, and thus it is not a tree.
     """
     
     def __init__(self):
