@@ -1,0 +1,78 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "uv-sync",
+            "type": "shell",
+            "command": "uv",
+            "args": ["sync"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "uv-run-python",
+            "type": "shell",
+            "command": "uv",
+            "args": ["run", "python", "${file}"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "uv-run-tests",
+            "type": "shell",
+            "command": "uv",
+            "args": ["run", "pytest"],
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "format-code",
+            "type": "shell",
+            "command": "uv",
+            "args": ["run", "black", "."],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "jupyter-lab",
+            "type": "shell",
+            "command": "uv",
+            "args": ["run", "jupyter", "lab", "--notebook-dir=notebooks"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

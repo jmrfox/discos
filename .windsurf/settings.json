@@ -1,0 +1,29 @@
+{
+    "python.defaultInterpreterPath": "/usr/bin/python3",
+    "python.terminal.activateEnvironment": false,
+    "python.terminal.executeInFileDir": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.linting.mypyEnabled": true,
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": ["--line-length", "88"],
+    "python.sortImports.args": ["--profile", "black"],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": ["."],
+    "jupyter.askForKernelRestart": false,
+    "jupyter.interactiveWindow.creationMode": "perFile",
+    "jupyter.notebookFileRoot": "${workspaceFolder}/notebooks",
+    "files.associations": {
+        "*.ipynb": "jupyter-notebook"
+    },
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.profiles.linux": {
+        "bash": {
+            "path": "/bin/bash",
+            "args": ["-l"]
+        }
+    },
+    "python.envFile": "${workspaceFolder}/.env"
+}

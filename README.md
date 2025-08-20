@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 Key dependencies include:
 - `numpy`, `scipy` - numerical computing
-- `trimesh`, `open3d` - mesh processing
+- `trimesh` - mesh processing
 - `scikit-image`, `opencv-python` - image processing for cross-sections
 - `networkx` - graph algorithms for connectivity
 - `matplotlib`, `plotly` - visualization (optional)
@@ -381,7 +381,7 @@ If you use GenCoMo in your research, please cite:
 ## Acknowledgments
 
 - Inspired by compartmental modeling approaches in NEURON and Brian2
-- Mesh processing powered by trimesh and Open3D
+- Mesh processing powered by trimesh
 - Scientific computing with NumPy, SciPy, and NetworkX
 
 ## Support
