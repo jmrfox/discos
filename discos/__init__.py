@@ -14,7 +14,7 @@ __email__ = "jordanmrfox@gmail.com"
 from .mesh import MeshManager
 
 # Segmentation functions
-from .segmentation import MeshSegmenter, Segment, SegmentGraph
+from .segmentation import MeshSegmenter, Segment, SegmentGraph, NodeEdgeSegmenter, NodeEdgeGraph, GraphNode, GraphEdge
 
 # Demo mesh functions from demos module
 from .demos import (
@@ -35,6 +35,11 @@ __all__ = [
     "MeshSegmenter",
     "Segment",
     "SegmentGraph",
+    # New node-edge architecture
+    "NodeEdgeSegmenter",
+    "NodeEdgeGraph",
+    "GraphNode",
+    "GraphEdge",
     # Demo mesh functions
     "create_cylinder_mesh",
     "create_torus_mesh",

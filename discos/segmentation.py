@@ -12,12 +12,159 @@ This module implements a robust mesh segmentation algorithm that:
 import numpy as np
 import trimesh
 import networkx as nx
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional, Any, Union
 from dataclasses import dataclass
 import warnings
 import math
 import json
 from collections import deque
+from scipy.optimize import minimize
+from scipy.spatial.distance import cdist
+from sklearn.cluster import DBSCAN
+
+
+# Utility functions for circle fitting and cross-section analysis
+def fit_circle_to_points(points_2d: np.ndarray, method: str = 'algebraic') -> Tuple[np.ndarray, float]:
+    """Fit a circle to 2D points using various methods.
+    
+    Args:
+        points_2d: Nx2 array of 2D points
+        method: 'algebraic', 'geometric', or 'robust'
+        
+    Returns:
+        Tuple of (center, radius)
+    """
+    if len(points_2d) < 3:
+        raise ValueError("Need at least 3 points to fit a circle")
+    
+    if method == 'algebraic':
+        return _fit_circle_algebraic(points_2d)
+    elif method == 'geometric':
+        return _fit_circle_geometric(points_2d)
+    elif method == 'robust':
+        return _fit_circle_robust(points_2d)
+    else:
+        raise ValueError(f"Unknown circle fitting method: {method}")
+
+
+def _fit_circle_algebraic(points: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Algebraic circle fitting (fastest, least accurate)."""
+    x, y = points[:, 0], points[:, 1]
+    
+    # Set up the system Ax = b
+    A = np.column_stack([2*x, 2*y, np.ones(len(x))])
+    b = x**2 + y**2
+    
+    # Solve using least squares
+    try:
+        params = np.linalg.lstsq(A, b, rcond=None)[0]
+        center = np.array([params[0], params[1]])
+        radius = np.sqrt(params[2] + params[0]**2 + params[1]**2)
+        return center, radius
+    except np.linalg.LinAlgError:
+        # Fallback to centroid and average distance
+        center = np.mean(points, axis=0)
+        radius = np.mean(np.linalg.norm(points - center, axis=1))
+        return center, radius
+
+
+def _fit_circle_geometric(points: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Geometric circle fitting (more accurate)."""
+    def objective(params):
+        center = params[:2]
+        radius = params[2]
+        distances = np.linalg.norm(points - center, axis=1)
+        return np.sum((distances - radius)**2)
+    
+    # Initial guess from algebraic method
+    center_init, radius_init = _fit_circle_algebraic(points)
+    x0 = np.array([center_init[0], center_init[1], radius_init])
+    
+    # Optimize
+    result = minimize(objective, x0, method='BFGS')
+    
+    if result.success:
+        center = result.x[:2]
+        radius = abs(result.x[2])
+        return center, radius
+    else:
+        # Fallback to algebraic method
+        return _fit_circle_algebraic(points)
+
+
+def _fit_circle_robust(points: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Robust circle fitting using RANSAC-like approach."""
+    best_center, best_radius = None, None
+    best_inliers = 0
+    
+    n_iterations = min(100, len(points) * 2)
+    inlier_threshold = 0.1  # Adjust based on your data scale
+    
+    for _ in range(n_iterations):
+        # Sample 3 random points
+        if len(points) >= 3:
+            sample_idx = np.random.choice(len(points), 3, replace=False)
+            sample_points = points[sample_idx]
+            
+            try:
+                center, radius = _fit_circle_algebraic(sample_points)
+                
+                # Count inliers
+                distances = np.linalg.norm(points - center, axis=1)
+                inliers = np.sum(np.abs(distances - radius) < inlier_threshold)
+                
+                if inliers > best_inliers:
+                    best_inliers = inliers
+                    best_center = center
+                    best_radius = radius
+            except:
+                continue
+    
+    if best_center is not None:
+        return best_center, best_radius
+    else:
+        # Fallback to geometric method
+        return _fit_circle_geometric(points)
+
+
+def calculate_radius_from_area(area: float) -> float:
+    """Calculate radius from area assuming circular cross-section."""
+    return np.sqrt(area / np.pi)
+
+
+def calculate_radius_from_boundary(boundary_points: np.ndarray, center: np.ndarray) -> float:
+    """Calculate average radius from center to boundary points."""
+    distances = np.linalg.norm(boundary_points - center, axis=1)
+    return np.mean(distances)
+
+
+def detect_cross_section_overlap(cross_sections: List['CrossSection'], tolerance: float = 0.1) -> List[Tuple[int, int]]:
+    """Detect overlapping cross-sections within the same slice.
+    
+    Args:
+        cross_sections: List of cross-sections to check
+        tolerance: Spatial tolerance for overlap detection
+        
+    Returns:
+        List of (i, j) indices of overlapping cross-sections
+    """
+    overlaps = []
+    
+    for i in range(len(cross_sections)):
+        for j in range(i + 1, len(cross_sections)):
+            cs1, cs2 = cross_sections[i], cross_sections[j]
+            
+            # Check if they're at the same z-level
+            if abs(cs1.z_position - cs2.z_position) < 1e-6:
+                # Check if centers are too close (overlap)
+                if cs1.center is not None and cs2.center is not None:
+                    center_distance = np.linalg.norm(cs1.center[:2] - cs2.center[:2])
+                    min_separation = cs1.radius + cs2.radius + tolerance
+                    
+                    if center_distance < min_separation:
+                        overlaps.append((i, j))
+    
+    return overlaps
 
 
 @dataclass
@@ -28,11 +175,41 @@ class CrossSection:
     intersection_lines: np.ndarray  # 3D line segments from mesh intersection
     intersection_2d: Optional[object] = None  # 2D planar projection if available
     area: float = 0.0
+    center: Optional[np.ndarray] = None  # Center of best-fit circle
+    radius: float = 0.0  # Radius of approximating circle
+    boundary_points: Optional[np.ndarray] = None  # 2D boundary points for circle fitting
+
+
+@dataclass
+class GraphNode:
+    """Represents a spatial point (center of cross-section) in the new graph architecture."""
+    
+    id: str
+    z_position: float
+    center: np.ndarray  # 3D center point (x, y, z)
+    radius: float  # Radius of approximating circle
+    cross_section: 'CrossSection'  # Reference to the cross-section
+    slice_index: int
+    cross_section_index: int  # Index within the slice (for multiple cross-sections)
+
+
+@dataclass
+class GraphEdge:
+    """Represents a cylindrical segment connecting two nodes."""
+    
+    id: str
+    node1_id: str
+    node2_id: str
+    length: float
+    radius1: float  # Radius at node1
+    radius2: float  # Radius at node2
+    center_line: np.ndarray  # 3D line from node1 to node2
+    volume: float  # Approximate cylinder volume
 
 
 @dataclass
 class Segment:
-    """Represents a single closed volume segment within a slice."""
+    """Legacy segment class - kept for compatibility during transition."""
 
     id: str
     slice_index: int
@@ -128,6 +305,196 @@ class SWCData:
         if self.non_tree_edges:
             summary += f"  ⚠️  {len(self.non_tree_edges)} cycle-breaking connections need post-processing\n"
         return summary
+
+
+class NodeEdgeGraph(nx.Graph):
+    """Graph representation using the new node-edge architecture.
+    
+    In this architecture:
+    - Nodes represent spatial points (centers of cross-sections)
+    - Edges represent cylindrical segments connecting those points
+    - Edge attributes contain cylinder metadata (length, radii, volume)
+    """
+    
+    def __init__(self):
+        super().__init__()
+        self.nodes_list: List[GraphNode] = []
+        self.edges_list: List[GraphEdge] = []
+        self.node_dict: Dict[str, GraphNode] = {}
+        self.edge_dict: Dict[str, GraphEdge] = {}
+    
+    def add_graph_node(self, node: GraphNode) -> None:
+        """Add a GraphNode to the graph."""
+        self.nodes_list.append(node)
+        self.node_dict[node.id] = node
+        
+        # Add to NetworkX graph with node attributes
+        self.add_node(node.id, 
+                     center=node.center,
+                     radius=node.radius,
+                     z_position=node.z_position,
+                     slice_index=node.slice_index,
+                     cross_section_index=node.cross_section_index)
+    
+    def add_graph_edge(self, edge: GraphEdge) -> None:
+        """Add a GraphEdge to the graph."""
+        self.edges_list.append(edge)
+        self.edge_dict[edge.id] = edge
+        
+        # Add to NetworkX graph with edge attributes
+        self.add_edge(edge.node1_id, edge.node2_id,
+                     edge_id=edge.id,
+                     length=edge.length,
+                     radius1=edge.radius1,
+                     radius2=edge.radius2,
+                     volume=edge.volume,
+                     center_line=edge.center_line)
+    
+    def get_node_by_id(self, node_id: str) -> Optional[GraphNode]:
+        """Get GraphNode by ID."""
+        return self.node_dict.get(node_id)
+    
+    def get_edge_by_id(self, edge_id: str) -> Optional[GraphEdge]:
+        """Get GraphEdge by ID."""
+        return self.edge_dict.get(edge_id)
+    
+    def export_to_swc(self, scale_factor: float = 1.0, 
+                      radius_method: str = 'equivalent_area') -> 'SWCData':
+        """Export to SWC format using the new node-edge structure."""
+        if len(self.nodes_list) == 0:
+            raise ValueError("Cannot export empty graph to SWC format")
+        
+        # Find root node (lowest z-position)
+        root_node = min(self.nodes_list, key=lambda n: n.z_position)
+        
+        # Build spanning tree to break cycles
+        tree_edges, non_tree_edges = self._break_cycles_for_swc(root_node.id)
+        
+        # Build parent-child relationships
+        parent_map = self._build_parent_map_from_tree(tree_edges, root_node.id)
+        
+        # Assign sample IDs
+        node_to_sample_id = self._assign_sample_ids_bfs(root_node.id, tree_edges)
+        
+        # Generate SWC entries
+        swc_entries = []
+        for node in sorted(self.nodes_list, key=lambda n: node_to_sample_id[n.id]):
+            x = node.center[0] * scale_factor
+            y = node.center[1] * scale_factor
+            z = node.center[2] * scale_factor
+            r = node.radius * scale_factor
+            
+            parent_node_id = parent_map.get(node.id, -1)
+            parent_sample_id = node_to_sample_id.get(parent_node_id, -1) if parent_node_id != -1 else -1
+            
+            sample_id = node_to_sample_id[node.id]
+            type_id = 5  # All nodes use type 5
+            
+            swc_entries.append(f"{sample_id} {type_id} {x:.6f} {y:.6f} {z:.6f} {r:.6f} {parent_sample_id}")
+        
+        # Create metadata
+        metadata = {
+            'total_segments': len(self.edges_list),
+            'total_nodes': len(self.nodes_list),
+            'tree_edges': len(tree_edges),
+            'non_tree_edges': len(non_tree_edges)
+        }
+        
+        # Format non-tree edges
+        formatted_non_tree_edges = [
+            {
+                'sample_id_1': node_to_sample_id.get(u, None),
+                'sample_id_2': node_to_sample_id.get(v, None),
+                'original_node_1': u,
+                'original_node_2': v
+            }
+            for u, v in sorted(non_tree_edges)
+        ]
+        
+        return SWCData(
+            entries=swc_entries,
+            metadata=metadata,
+            non_tree_edges=formatted_non_tree_edges,
+            root_segment=root_node.id,
+            scale_factor=scale_factor
+        )
+    
+    def _break_cycles_for_swc(self, root_node_id: str) -> Tuple[set, set]:
+        """Break cycles using minimum spanning tree."""
+        # Create weighted graph based on edge lengths
+        weighted_graph = self.copy()
+        for edge in self.edges_list:
+            if weighted_graph.has_edge(edge.node1_id, edge.node2_id):
+                weighted_graph[edge.node1_id][edge.node2_id]['weight'] = edge.length
+        
+        # Create minimum spanning tree
+        mst = nx.minimum_spanning_tree(weighted_graph)
+        tree_edges = set(mst.edges())
+        
+        # Identify non-tree edges
+        all_edges = set((min(u, v), max(u, v)) for u, v in self.edges())
+        tree_edges_normalized = set((min(u, v), max(u, v)) for u, v in tree_edges)
+        non_tree_edges = all_edges - tree_edges_normalized
+        
+        return tree_edges_normalized, non_tree_edges
+    
+    def _build_parent_map_from_tree(self, tree_edges: set, root_node_id: str) -> dict:
+        """Build parent-child mapping from tree edges."""
+        # Build adjacency list
+        tree_adj = {}
+        for u, v in tree_edges:
+            if u not in tree_adj:
+                tree_adj[u] = []
+            if v not in tree_adj:
+                tree_adj[v] = []
+            tree_adj[u].append(v)
+            tree_adj[v].append(u)
+        
+        # BFS to establish parent-child relationships
+        parent_map = {root_node_id: -1}
+        visited = set([root_node_id])
+        queue = deque([root_node_id])
+        
+        while queue:
+            current = queue.popleft()
+            for neighbor in tree_adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    parent_map[neighbor] = current
+                    queue.append(neighbor)
+        
+        return parent_map
+    
+    def _assign_sample_ids_bfs(self, root_node_id: str, tree_edges: set) -> dict:
+        """Assign sample IDs using BFS order."""
+        # Build adjacency list
+        tree_adj = {}
+        for u, v in tree_edges:
+            if u not in tree_adj:
+                tree_adj[u] = []
+            if v not in tree_adj:
+                tree_adj[v] = []
+            tree_adj[u].append(v)
+            tree_adj[v].append(u)
+        
+        # BFS assignment
+        node_to_sample_id = {}
+        sample_id = 1
+        queue = deque([root_node_id])
+        visited = set([root_node_id])
+        node_to_sample_id[root_node_id] = sample_id
+        sample_id += 1
+        
+        while queue:
+            current = queue.popleft()
+            for neighbor in tree_adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    node_to_sample_id[neighbor] = sample_id
+                    sample_id += 1
+                    queue.append(neighbor)
+        
+        return node_to_sample_id
 
 
 class SegmentGraph(nx.Graph):
@@ -662,8 +1029,337 @@ class SegmentGraph(nx.Graph):
 
 
 
+class NodeEdgeSegmenter:
+    """New segmentation algorithm using node-edge architecture.
+    
+    This segmenter creates nodes at cross-section centers and edges as 
+    cylindrical segments connecting them.
+    """
+    
+    def __init__(self):
+        self.original_mesh = None
+        self.slice_height = None
+        self.cross_sections: List[CrossSection] = []
+        self.graph = NodeEdgeGraph()
+        self.radius_method = 'equivalent_area'
+        self.circle_fitting_method = 'geometric'
+    
+    def segment_mesh(self, mesh: trimesh.Trimesh, slice_height: float, 
+                    radius_method: str = 'equivalent_area',
+                    circle_fitting_method: str = 'geometric',
+                    min_area: float = 1e-6) -> NodeEdgeGraph:
+        """Segment mesh using the new node-edge architecture.
+        
+        Args:
+            mesh: Input mesh (must be single closed volume)
+            slice_height: Height of each slice
+            radius_method: Method for calculating radius ('equivalent_area', 'average_distance', 'fitted_circle')
+            circle_fitting_method: Method for circle fitting ('algebraic', 'geometric', 'robust')
+            min_area: Minimum cross-section area threshold
+            
+        Returns:
+            NodeEdgeGraph: Graph with nodes as spatial points and edges as segments
+        """
+        if slice_height <= 0:
+            raise ValueError(f"slice_height must be positive, got {slice_height}")
+        
+        self.original_mesh = mesh.copy()
+        self.slice_height = slice_height
+        self.radius_method = radius_method
+        self.circle_fitting_method = circle_fitting_method
+        self.cross_sections = []
+        self.graph = NodeEdgeGraph()
+        
+        # Step 1: Validate input mesh
+        self._validate_single_hull_mesh(mesh)
+        
+        # Step 2: Compute cross-sections and create nodes
+        self._compute_cross_sections_and_nodes(mesh, min_area)
+        
+        # Step 3: Detect overlapping cross-sections (error if found)
+        self._validate_no_overlaps()
+        
+        # Step 4: Build connectivity between nodes (the tricky part!)
+        self._build_node_connectivity(mesh)
+        
+        # Step 5: Create edges with cylinder metadata
+        self._create_cylinder_edges()
+        
+        print(f"✅ Created node-edge graph: {len(self.graph.nodes_list)} nodes, {len(self.graph.edges_list)} edges")
+        return self.graph
+    
+    def _validate_single_hull_mesh(self, mesh: trimesh.Trimesh):
+        """Validate that mesh is a single closed volume."""
+        if not mesh.is_watertight:
+            raise ValueError("Input mesh must be watertight (closed volume)")
+        
+        components = mesh.split(only_watertight=False)
+        if len(components) > 1:
+            raise ValueError(
+                f"Input mesh has {len(components)} disconnected components. "
+                "Mesh must be a single connected volume."
+            )
+        
+        print(f"✅ Validated single-hull mesh: volume={mesh.volume:.3f}")
+    
+    def _compute_cross_sections_and_nodes(self, mesh: trimesh.Trimesh, min_area: float):
+        """Compute cross-sections and create nodes at their centers."""
+        z_min, z_max = mesh.bounds[:, 2]
+        z_positions = np.arange(z_min + self.slice_height, z_max, self.slice_height)
+        
+        print(f"Computing cross-sections at {len(z_positions)} z-positions")
+        
+        for slice_idx, z_pos in enumerate(z_positions):
+            plane_origin = np.array([0, 0, z_pos])
+            plane_normal = np.array([0, 0, 1])
+            
+            try:
+                # Get 2D cross-section
+                section_2d = mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
+                
+                if section_2d is not None and hasattr(section_2d, 'area') and section_2d.area > min_area:
+                    # Handle multiple disconnected cross-sections (branching)
+                    if hasattr(section_2d, 'split'):
+                        sections = section_2d.split()
+                    else:
+                        sections = [section_2d]
+                    
+                    for cs_idx, section in enumerate(sections):
+                        if section.area > min_area:
+                            cross_section = self._create_cross_section_and_node(
+                                section, z_pos, slice_idx, cs_idx
+                            )
+                            self.cross_sections.append(cross_section)
+                            
+                            print(f"  Created node at z={z_pos:.2f}, area={section.area:.3f}, "
+                                  f"center={cross_section.center}, radius={cross_section.radius:.3f}")
+                
+            except Exception as e:
+                print(f"  Error at z={z_pos:.2f}: {e}")
+        
+        print(f"✅ Created {len(self.cross_sections)} cross-sections and nodes")
+    
+    def _create_cross_section_and_node(self, section_2d, z_pos: float, 
+                                      slice_idx: int, cs_idx: int) -> CrossSection:
+        """Create a cross-section and corresponding graph node."""
+        # Get boundary points in 2D
+        if hasattr(section_2d, 'vertices'):
+            boundary_2d = section_2d.vertices
+        else:
+            # Fallback: sample points from the boundary
+            boundary_2d = self._sample_boundary_points(section_2d)
+        
+        # Fit circle to boundary points
+        center_2d, fitted_radius = fit_circle_to_points(boundary_2d, self.circle_fitting_method)
+        
+        # Calculate radius using specified method
+        if self.radius_method == 'equivalent_area':
+            radius = calculate_radius_from_area(section_2d.area)
+        elif self.radius_method == 'average_distance':
+            radius = calculate_radius_from_boundary(boundary_2d, center_2d)
+        elif self.radius_method == 'fitted_circle':
+            radius = fitted_radius
+        else:
+            raise ValueError(f"Unknown radius method: {self.radius_method}")
+        
+        # Create 3D center point
+        center_3d = np.array([center_2d[0], center_2d[1], z_pos])
+        
+        # Create CrossSection
+        cross_section = CrossSection(
+            z_position=z_pos,
+            intersection_lines=np.array([]),  # Not used in new architecture
+            intersection_2d=section_2d,
+            area=section_2d.area,
+            center=center_3d,
+            radius=radius,
+            boundary_points=boundary_2d
+        )
+        
+        # Create GraphNode
+        node_id = f"node_{slice_idx}_{cs_idx}"
+        node = GraphNode(
+            id=node_id,
+            z_position=z_pos,
+            center=center_3d,
+            radius=radius,
+            cross_section=cross_section,
+            slice_index=slice_idx,
+            cross_section_index=cs_idx
+        )
+        
+        # Add node to graph
+        self.graph.add_graph_node(node)
+        
+        return cross_section
+    
+    def _sample_boundary_points(self, section_2d, n_points: int = 50) -> np.ndarray:
+        """Sample points from the boundary of a 2D section."""
+        # This is a fallback method if vertices are not directly available
+        try:
+            # Try to get boundary points from the section
+            if hasattr(section_2d, 'boundary'):
+                boundary = section_2d.boundary
+                if hasattr(boundary, 'vertices'):
+                    return boundary.vertices
+            
+            # Fallback: create a rough circular approximation
+            center = np.array([0, 0])  # Will be refined by circle fitting
+            radius_est = np.sqrt(section_2d.area / np.pi)
+            angles = np.linspace(0, 2*np.pi, n_points, endpoint=False)
+            points = center + radius_est * np.column_stack([np.cos(angles), np.sin(angles)])
+            return points
+            
+        except:
+            # Ultimate fallback
+            center = np.array([0, 0])
+            radius_est = np.sqrt(section_2d.area / np.pi)
+            angles = np.linspace(0, 2*np.pi, n_points, endpoint=False)
+            points = center + radius_est * np.column_stack([np.cos(angles), np.sin(angles)])
+            return points
+    
+    def _validate_no_overlaps(self):
+        """Validate that cross-sections don't overlap within same slice."""
+        overlaps = detect_cross_section_overlap(self.cross_sections)
+        
+        if overlaps:
+            overlap_info = []
+            for i, j in overlaps:
+                cs1, cs2 = self.cross_sections[i], self.cross_sections[j]
+                overlap_info.append(
+                    f"Cross-sections {i} and {j} at z={cs1.z_position:.3f}: "
+                    f"centers {cs1.center[:2]} and {cs2.center[:2]}, "
+                    f"radii {cs1.radius:.3f} and {cs2.radius:.3f}"
+                )
+            
+            raise ValueError(
+                f"Found {len(overlaps)} overlapping cross-sections:\n" + 
+                "\n".join(overlap_info)
+            )
+        
+        print("✅ No overlapping cross-sections detected")
+    
+    def _build_node_connectivity(self, mesh: trimesh.Trimesh):
+        """Build connectivity between nodes in adjacent slices.
+        
+        This is the trickiest part - determining which nodes connect through 
+        contiguous volume paths.
+        """
+        print("Building node connectivity through volume analysis...")
+        
+        # Group nodes by slice
+        nodes_by_slice = {}
+        for node in self.graph.nodes_list:
+            slice_idx = node.slice_index
+            if slice_idx not in nodes_by_slice:
+                nodes_by_slice[slice_idx] = []
+            nodes_by_slice[slice_idx].append(node)
+        
+        connections_found = 0
+        
+        # Check connectivity between adjacent slices
+        for slice_idx in sorted(nodes_by_slice.keys())[:-1]:
+            next_slice_idx = slice_idx + 1
+            
+            if next_slice_idx in nodes_by_slice:
+                current_nodes = nodes_by_slice[slice_idx]
+                next_nodes = nodes_by_slice[next_slice_idx]
+                
+                # Check each pair of nodes from adjacent slices
+                for node1 in current_nodes:
+                    for node2 in next_nodes:
+                        if self._nodes_connected_through_volume(node1, node2, mesh):
+                            # We'll create the actual edge later in _create_cylinder_edges
+                            # For now, just mark them as connected in NetworkX graph
+                            if not self.graph.has_edge(node1.id, node2.id):
+                                self.graph.add_edge(node1.id, node2.id, temp_connection=True)
+                                connections_found += 1
+                                print(f"  Connected {node1.id} ↔ {node2.id}")
+        
+        print(f"✅ Found {connections_found} node connections")
+    
+    def _nodes_connected_through_volume(self, node1: GraphNode, node2: GraphNode, 
+                                       mesh: trimesh.Trimesh) -> bool:
+        """Determine if two nodes are connected through contiguous volume.
+        
+        This uses a combination of geometric and volumetric analysis.
+        """
+        # Basic geometric check: are the cross-sections close enough?
+        center1_2d = node1.center[:2]
+        center2_2d = node2.center[:2]
+        distance_2d = np.linalg.norm(center1_2d - center2_2d)
+        
+        # If centers are too far apart, they're probably not connected
+        max_distance = (node1.radius + node2.radius) * 2.0  # Generous threshold
+        if distance_2d > max_distance:
+            return False
+        
+        # Volume-based connectivity check
+        # Sample points between the two cross-sections and check if they're inside the mesh
+        z1, z2 = node1.z_position, node2.z_position
+        
+        # Create interpolated points along the potential connection
+        n_samples = 10
+        z_samples = np.linspace(z1, z2, n_samples)
+        
+        # Interpolate centers and radii
+        center_samples = np.array([
+            np.array([center1_2d[0], center1_2d[1], z]) + 
+            (z - z1) / (z2 - z1) * np.array([center2_2d[0] - center1_2d[0], 
+                                           center2_2d[1] - center1_2d[1], 0])
+            for z in z_samples
+        ])
+        
+        # Check if sample points are inside the mesh
+        inside_count = 0
+        for center_sample in center_samples:
+            if mesh.contains([center_sample])[0]:
+                inside_count += 1
+        
+        # Require most sample points to be inside the mesh
+        connectivity_threshold = 0.7  # 70% of samples must be inside
+        return (inside_count / n_samples) >= connectivity_threshold
+    
+    def _create_cylinder_edges(self):
+        """Create GraphEdge objects for all connected node pairs."""
+        print("Creating cylinder edges with metadata...")
+        
+        edge_count = 0
+        for node1_id, node2_id in self.graph.edges():
+            node1 = self.graph.get_node_by_id(node1_id)
+            node2 = self.graph.get_node_by_id(node2_id)
+            
+            if node1 and node2:
+                # Calculate edge properties
+                center_line = np.array([node1.center, node2.center])
+                length = np.linalg.norm(node2.center - node1.center)
+                
+                # Approximate cylinder volume (truncated cone)
+                r1, r2 = node1.radius, node2.radius
+                volume = (np.pi * length / 3) * (r1**2 + r1*r2 + r2**2)
+                
+                # Create GraphEdge
+                edge_id = f"edge_{node1_id}_{node2_id}"
+                edge = GraphEdge(
+                    id=edge_id,
+                    node1_id=node1_id,
+                    node2_id=node2_id,
+                    length=length,
+                    radius1=r1,
+                    radius2=r2,
+                    center_line=center_line,
+                    volume=volume
+                )
+                
+                # Add to graph
+                self.graph.add_graph_edge(edge)
+                edge_count += 1
+        
+        print(f"✅ Created {edge_count} cylinder edges")
+
+
 class MeshSegmenter:
-    """Systematic mesh segmentation using cross-sectional cuts."""
+    """Legacy systematic mesh segmentation using cross-sectional cuts."""
 
     def __init__(self):
         self.original_mesh = None

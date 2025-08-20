@@ -8,8 +8,14 @@ from setuptools import setup, find_packages
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+# Dependencies are now managed in pyproject.toml
+requirements = [
+    "numpy>=1.20.0",
+    "trimesh>=3.15.0",
+    "networkx>=2.6",
+    "matplotlib>=3.5.0",
+    "plotly>=5.0.0",
+]
 
 setup(
     name="gencomo",
