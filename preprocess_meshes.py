@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mesh preprocessing script for GenComo project.
+Mesh preprocessing script for DISCOS project.
 
 This script loads OBJ mesh files from data/raw, processes them using MeshManager
 to center, normalize, and repair the meshes, then saves the processed meshes
@@ -16,10 +16,10 @@ from pathlib import Path
 import numpy as np
 from typing import List, Tuple
 
-# Add the gencomo package to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'gencomo'))
+# Add the discos package to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'discos'))
 
-from gencomo.mesh import MeshManager
+from discos.mesh import MeshManager
 
 
 def get_obj_files(directory: str) -> List[Path]:

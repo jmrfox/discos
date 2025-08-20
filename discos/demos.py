@@ -1,5 +1,5 @@
 """
-Demo mesh generation functions for GenCoMo.
+Demo mesh generation functions for DISCOS.
 
 Provides example mesh generators for neuronal morphologies using trimesh.
 These functions create standard geometries for tutorials and demonstrations.
@@ -375,14 +375,23 @@ def create_demo_neuron_mesh(
 
         dendrites.append(dendrite)
 
+    # Ensure all components are watertight before union
+    for i, component in enumerate([soma, axon] + dendrites):
+        if not component.is_watertight:
+            component.fill_holes()
+    
     # Combine using boolean union operations for clean exterior surface
-    all_components = [soma, axon] + dendrites
     try:
-        # Use boolean union to combine all overlapping shapes cleanly
-        neuron = trimesh.boolean.union(all_components)
+        # Start with soma and progressively add components
+        neuron = soma
+        for component in [axon] + dendrites:
+            neuron = trimesh.boolean.union([neuron, component])
+            if neuron is None or len(neuron.vertices) == 0:
+                raise ValueError("Boolean union resulted in empty mesh")
     except Exception as e:
         # If union fails, fall back to concatenation
         warnings.warn(f"Boolean union failed: {e}, using concatenation")
+        all_components = [soma, axon] + dendrites
         neuron = trimesh.util.concatenate(all_components)
 
     # Light cleanup to remove any duplicate faces from concatenation fallback

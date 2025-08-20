@@ -1,5 +1,5 @@
 """
-Utility functions for GenCoMo.
+Utility functions for DISCOS.
 """
 
 import os

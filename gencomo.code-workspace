@@ -1,0 +1,29 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        // Override any global settings that might restore files
+        "files.hotExit": "onExitAndWindowClose",
+        "workbench.editor.restoreViewState": false,
+        "workbench.editor.closeOnFileDelete": true,
+        "workbench.startupEditor": "none",
+        "files.restoreUndoStack": false,
+        "workbench.editor.enablePreview": false,
+        "workbench.editor.enablePreviewFromQuickOpen": false,
+        "workbench.editor.reopenWith": "default",
+        "workbench.editor.limit.enabled": true,
+        "workbench.editor.limit.value": 3,
+        "workbench.commandPalette.history": 0,
+        "workbench.quickOpen.preserveInput": false,
+        "explorer.autoReveal": false
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-toolsai.jupyter"
+        ]
+    }
+}

@@ -282,17 +282,17 @@ visualize_zstack_3d(cylinder_zstack)  # 3D visualization
 
 ### Command Line Interface
 
-GenCoMo also provides a command-line interface:
+DISCOS also provides a command-line interface:
 
 ```bash
 # Process a mesh file
-gencomo process neuron.stl -o model.npz --num-slices 50
+discos process neuron.stl -o model.npz --num-slices 50
 
 # Run simulation
-gencomo simulate model.npz -o results.npz --duration 100 --stimulus comp_0 10 1 5
+discos simulate model.npz -o results.npz --duration 100 --stimulus comp_0 10 1 5
 
 # Analyze results
-gencomo analyze results.npz --plot
+discos analyze results.npz --plot
 ```
 
 ## Examples
@@ -314,7 +314,7 @@ python z_stack_examples.py
 
 ## Physical Units
 
-GenCoMo uses consistent units throughout the modeling pipeline. Understanding these units is crucial for setting appropriate parameters and interpreting results.
+DISCOS uses consistent units throughout the modeling pipeline. Understanding these units is crucial for setting appropriate parameters and interpreting results.
 
 ### Electrical Properties
 - **Voltage**: mV (millivolts)
@@ -409,9 +409,9 @@ simulator.add_stimulus(
 
 ### Core Concepts
 
-**Mesh Processing**: GenCoMo starts with a 3D mesh representing the neuronal membrane. The mesh is preprocessed (centered, aligned, smoothed) before analysis.
+**Mesh Processing**: DISCOS starts with a 3D mesh representing the neuronal membrane. The mesh is preprocessed (centered, aligned, smoothed) before analysis.
 
-**Z-axis Slicing**: The mesh is sliced along the z-axis at regular intervals to create 2D cross-sections. Each slice contains contours representing the neuronal boundary. GenCoMo also supports direct z-stack representations as binary 3D arrays.
+**Z-axis Slicing**: The mesh is sliced along the z-axis at regular intervals to create 2D cross-sections. Each slice contains contours representing the neuronal boundary. DISCOS also supports direct z-stack representations as binary 3D arrays.
 
 **Interactive Visualization**: Z-stack data can be explored interactively using built-in visualization functions that provide slider controls for navigating through different z-levels and comparing slices side-by-side.
 
@@ -499,8 +499,8 @@ pip install -e ".[dev]"
 We use `black` for code formatting and `flake8` for linting:
 
 ```bash
-black gencomo/
-flake8 gencomo/
+black discos/
+flake8 discos/
 ```
 
 ## License
@@ -509,20 +509,20 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Citation
 
-If you use GenCoMo in your research, please cite:
+If you use DISCOS in your research, please cite:
 
 ```bibtex
-@software{gencomo,
-  title={GenCoMo: GENeral-morphology COmpartmental MOdeling},
+@software{discos,
+  title={DISCOS: DIScrete COllinear Skeletonization},
   author={Fox, Jordan},
   year={2025},
-  url={https://github.com/jmrfox/gencomo}
+  url={https://github.com/jmrfox/discos}
 }
 ```
 
 ## Comparison with Other Tools
 
-| Feature                   | GenCoMo | NEURON | Brian2 | Arbor |
+| Feature                   | DISCOS | NEURON | Brian2 | Arbor |
 | ------------------------- | ------- | ------ | ------ | ----- |
 | Mesh-based morphology     | ✅       | ❌      | ❌      | ❌     |
 | Z-stack representation    | ✅       | ❌      | ❌      | ❌     |
@@ -562,7 +562,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh  # Unix/macOS
 # or
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"  # Windows
 
-# Clone and install GenCoMo
+# Clone and install DISCOS
 git clone https://github.com/jmrfox/discos.git
 cd discos
 uv sync  # Install dependencies and create virtual environment

@@ -1,14 +1,14 @@
-# Contributing to GenCoMo
+# Contributing to DISCOS
 
-Thank you for your interest in contributing to GenCoMo! This document provides guidelines for contributing to the project.
+Thank you for your interest in contributing to DISCOS! This document provides guidelines for contributing to the project.
 
 ## Development Setup
 
 1. Fork the repository on GitHub
 2. Clone your fork locally:
    ```bash
-   git clone https://github.com/yourusername/gencomo.git
-   cd gencomo
+   git clone https://github.com/yourusername/discos.git
+   cd discos
    ```
 3. Create a virtual environment:
    ```bash
@@ -31,9 +31,9 @@ We follow these coding standards:
 
 Format and check your code:
 ```bash
-black gencomo/ tests/ examples/
-flake8 gencomo/ tests/ examples/
-mypy gencomo/
+black discos/ tests/ examples/
+flake8 discos/ tests/ examples/
+mypy discos/
 ```
 
 ## Testing
@@ -47,7 +47,7 @@ pytest tests/
 
 Run tests with coverage:
 ```bash
-pytest --cov=gencomo tests/
+pytest --cov=discos tests/
 ```
 
 ## Documentation
@@ -118,7 +118,7 @@ We welcome contributions in these areas:
 ## Code Organization
 
 ```
-gencomo/
+discos/
 ├── core.py          # Core data structures
 ├── mesh.py          # Mesh processing utilities  
 ├── slicer.py        # Z-axis slicing
@@ -156,4 +156,4 @@ Feel free to:
 - Start a discussion on GitHub Discussions
 - Contact the maintainers directly
 
-Thank you for contributing to GenCoMo!
+Thank you for contributing to DISCOS!

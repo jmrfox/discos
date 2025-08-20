@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for GenCoMo (GENeral-morphology COmpartmental MOdeling)
+Setup script for DISCOS (DISrete COllinear Skeletonization)
 """
 
 from setuptools import setup, find_packages
@@ -18,14 +18,14 @@ requirements = [
 ]
 
 setup(
-    name="gencomo",
+    name="discos",
     version="0.1.0",
     author="Jordan Fox",
     author_email="jmrfox@example.com",
-    description="GENeral-morphology COmpartmental MOdeling for complex neuronal simulations",
+    description="DISrete COllinear Skeletonization for 3D mesh analysis and neuronal morphology processing",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/jmrfox/gencomo",
+    url="https://github.com/jmrfox/discos",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -54,7 +54,7 @@ setup(
     entry_points={
         # Note: CLI disabled since it depends on modules moved to dev_storage
         # "console_scripts": [
-        #     "gencomo=gencomo.cli:main",
+        #     "discos=discos.cli:main",
         # ],
     },
 )
