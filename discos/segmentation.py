@@ -1025,53 +1025,65 @@ class SegmentGraph(nx.Graph):
                 node_colors = slice_indices
                 cmap = cm.viridis
 
-            # Node sizes based on volume with better scaling
-            volumes = [data.get("volume", 1.0) for _, data in self.nodes(data=True)]
-            if volumes:
-                # Scale volumes for better visualization
-                min_vol = min(volumes) if min(volumes) > 0 else 1e-6
-                max_vol = max(volumes)
-                # Logarithmic scaling for better size distribution
-                log_volumes = [np.log10(max(v, min_vol)) for v in volumes]
-                # Scale to reasonable node sizes
-                min_size = 50  # Minimum node size
-                max_size = 1000  # Maximum node size
-                if max(log_volumes) > min(log_volumes):
-                    node_sizes = [
-                        min_size
-                        + (max_size - min_size)
-                        * (v - min(log_volumes))
-                        / (max(log_volumes) - min(log_volumes))
-                        for v in log_volumes
-                    ]
-                else:
-                    node_sizes = [
-                        min_size + (max_size - min_size) * 0.5 for _ in log_volumes
-                    ]
+            # Node sizes based on radius (nodes represent spatial points with radii)
+            node_sizes = []
+            for _, data in self.nodes(data=True):
+                radius = data.get("radius", 1.0)  # Default radius if not available
+                # Scale radius for visualization (convert to marker size)
+                marker_size = max(radius * node_scale, 20)  # Minimum size of 20
+                node_sizes.append(marker_size)
 
-                # Apply user scaling factor
-                node_sizes = [s * node_scale / 1000.0 for s in node_sizes]
-            else:
-                node_sizes = 100
-
-            # Draw the graph
-            nx.draw_networkx(
+            # Draw nodes and edges separately for better control
+            nx.draw_networkx_nodes(
                 self,
                 pos=pos,
                 node_color=node_colors,
                 cmap=cmap,
                 node_size=node_sizes,
-                with_labels=True,
-                font_size=8,
-                font_weight="bold",
-                edge_color="gray",
-                width=2,
                 alpha=0.8,
                 ax=ax,
             )
 
+            # Draw edges (these represent the segments)
+            nx.draw_networkx_edges(
+                self,
+                pos=pos,
+                edge_color="gray",
+                width=2,
+                alpha=0.6,
+                ax=ax,
+            )
+
+            # Draw node labels (spatial points)
+            nx.draw_networkx_labels(
+                self,
+                pos=pos,
+                font_size=8,
+                font_weight="bold",
+                ax=ax,
+            )
+
+            # Draw edge labels (segments) - show edge IDs or segment info
+            edge_labels = {}
+            for i, (u, v, data) in enumerate(self.edges(data=True)):
+                # Use edge index as segment identifier
+                edge_labels[(u, v)] = f"S{i+1}"
+
+            nx.draw_networkx_edge_labels(
+                self,
+                pos=pos,
+                edge_labels=edge_labels,
+                font_size=6,
+                font_color="red",
+                ax=ax,
+            )
+
             # Add title and labels
-            ax.set_title("Segment Graph Visualization", fontsize=14, fontweight="bold")
+            ax.set_title(
+                "Segment Graph: Nodes=Spatial Points, Edges=Segments",
+                fontsize=14,
+                fontweight="bold",
+            )
             ax.set_xlabel(
                 f"Horizontal Position (X*{x_weight:.2f} + Y*{y_weight:.2f})",
                 fontsize=12,
@@ -1515,7 +1527,6 @@ class MeshSegmenter:
 
     ARCHITECTURAL DESIGN:
     ====================
-
     The algorithm follows a node-edge graph architecture where:
     - Nodes = Volumetric segments (3D regions between cross-sections)
     - Edges = Connectivity relationships between adjacent segments
