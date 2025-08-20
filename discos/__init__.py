@@ -1,8 +1,9 @@
 """
-GenCoMo: GENeral-morphology COmpartmental MOdeling
+DISCOS: DISrete COllinear Skeletonization
 
-A Python package for compartmental simulation of neurons with complex morphologies
-using mesh-based geometric approaches rather than traditional SWC cylinder models.
+A Python package for 3D mesh manipulation and skeletonization of complex neuronal morphologies.
+Provides tools for mesh processing, segmentation, and conversion to SWC format using discrete
+collinear skeletonization algorithms.
 """
 
 __version__ = "0.1.0"
@@ -24,12 +25,6 @@ from .demos import (
     save_demo_meshes,
 )
 
-# Parameter management system
-from .parameters import IndependentParameter, ParameterSet, DerivedParameter, ParameterBank
-
-# Core modules and functionality
-from .ode import ODESystem
-from .simulation import Simulator
 
 # Utility functions
 from .utils import data_path
@@ -46,14 +41,6 @@ __all__ = [
     "create_branching_mesh",
     "create_demo_neuron_mesh",
     "save_demo_meshes",
-    # Parameter management
-    "IndependentParameter",
-    "ParameterSet",
-    "DerivedParameter",
-    "ParameterBank",
-    # Core modules
-    "ODESystem",
-    "Simulator",
     # Utility functions
     "data_path",
 ]

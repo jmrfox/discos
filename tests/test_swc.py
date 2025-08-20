@@ -16,7 +16,7 @@ import tempfile
 import json
 from pathlib import Path
 
-# Add the parent directory to path for importing gencomo
+# Add the parent directory to path for importing discos
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
@@ -24,8 +24,8 @@ import pytest
 import trimesh
 import networkx as nx
 
-from gencomo.demos import create_cylinder_mesh, create_torus_mesh
-from gencomo.segmentation import MeshSegmenter, SegmentGraph, SWCData
+from discos.demos import create_cylinder_mesh, create_torus_mesh
+from discos.segmentation import MeshSegmenter, SegmentGraph, SWCData
 
 
 class TestSWCData:

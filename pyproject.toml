@@ -3,12 +3,12 @@ requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gencomo"
+name = "discos"
 authors = [{name = "Jordan Fox", email = "jmrfox@example.com"}]
-description = "GENeral-morphology COmpartmental MOdeling for complex neuronal simulations"
+description = "DISrete COllinear Skeletonization for 3D mesh processing and neuronal morphology analysis"
 readme = "README.md"
 requires-python = ">=3.8"
-keywords = ["neuroscience", "simulation", "compartmental-modeling", "mesh", "neuron"]
+keywords = ["neuroscience", "mesh-processing", "skeletonization", "swc", "neuron", "morphology"]
 license = {text = "MIT"}
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -43,7 +43,6 @@ dependencies = [
     "manifold3d>=3.1.1",
     "shapely>=2.0.7",
     "rtree>=1.3.0",
-    "arbor>=0.9.0",
     "jupyterlab>=4.3.8",
 ]
 dynamic = ["version"]
@@ -60,19 +59,19 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jmrfox/gencomo"
-Documentation = "https://github.com/jmrfox/gencomo/wiki"
-Repository = "https://github.com/jmrfox/gencomo.git"
-"Bug Tracker" = "https://github.com/jmrfox/gencomo/issues"
+Homepage = "https://github.com/jmrfox/discos"
+Documentation = "https://github.com/jmrfox/discos/wiki"
+Repository = "https://github.com/jmrfox/discos.git"
+"Bug Tracker" = "https://github.com/jmrfox/discos/issues"
 
 [project.scripts]
-gencomo = "gencomo.cli:main"
+discos = "discos.cli:main"
 
 [tool.setuptools]
-packages = ["gencomo"]
+packages = ["discos"]
 
 [tool.setuptools_scm]
-write_to = "gencomo/_version.py"
+write_to = "discos/_version.py"
 
 [tool.black]
 line-length = 88

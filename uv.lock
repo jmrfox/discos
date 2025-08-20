@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.8"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -99,94 +99,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/35/5d/752690df9ef5b76e169e68d6a129fa6d08a7100ca7f754c89495db3c6019/appnope-0.1.4.tar.gz", hash = "sha256:1de3860566df9caf38f01f86f65e0e13e379af54f9e4bee1e66b48f2efffd1ee", size = 4170, upload-time = "2024-02-06T09:43:11.258Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/29/5ecc3a15d5a33e31b26c11426c45c501e439cb865d0bff96315d86443b78/appnope-0.1.4-py2.py3-none-any.whl", hash = "sha256:502575ee11cd7a28c0205f379b525beefebab9d161b7c964670864014ed7213c", size = 4321, upload-time = "2024-02-06T09:43:09.663Z" },
-]
-
-[[package]]
-name = "arbor"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.8.1' and python_full_version < '3.9'",
-    "python_full_version < '3.8.1'",
-]
-dependencies = [
-    { name = "numpy", version = "1.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/50/74/6770799da035e8f54a37ff28dae46a8b6e42c354943be6fa57df1f01e873/arbor-0.9.0.tar.gz", hash = "sha256:8b229d3832c76552ccff8358b087ccae7d407251860e32b488329bcc7577f695", size = 17479771, upload-time = "2023-08-10T14:20:13.573Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/95/e738b75641a3022c7d114416778e5fd88506d8d8264e82cb1ab784b01da7/arbor-0.9.0-cp310-cp310-macosx_10_15_universal2.whl", hash = "sha256:72e6ba478a3c441543f6c9cfa6a87205e38e0a0270ebe9e2875fe97b44290ae9", size = 15160941, upload-time = "2023-08-10T14:18:52.784Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/f7/9d8ad75603025b01acc4a43a2ad87be902aa4b0250b8e3bc6625dc945489/arbor-0.9.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:17e851e3263e9cc597747691edf3a6e202da216e817cfba881dbf572dcf1f714", size = 25945484, upload-time = "2023-08-10T14:18:56.617Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/89/7c96ea7a11f1da3a7ea778a098eeb54d8d5bf76c55fb1048e84449fa07bd/arbor-0.9.0-cp311-cp311-macosx_10_15_universal2.whl", hash = "sha256:1227e1fe99529efadf9bc79651416f4ddcc9bd3881c9b114c0cf4ad58e1cc0eb", size = 15160870, upload-time = "2023-08-10T14:19:00.37Z" },
-    { url = "https://files.pythonhosted.org/packages/63/e3/b3373571331e0cf634400b1cb5ca90ec7a5659a0979db76b037b024e2739/arbor-0.9.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:49682b0a908dddf8b1ed690d6da39990b7ddc1c426f9727ca0ed5a01c0ca0e99", size = 25941487, upload-time = "2023-08-10T14:19:04.708Z" },
-    { url = "https://files.pythonhosted.org/packages/17/a3/4ba5aa1b495bf77f46bf4ba95345f2305ccae46bd2acf15a012d96c660f5/arbor-0.9.0-cp312-cp312-macosx_10_15_universal2.whl", hash = "sha256:6b3706f828187f9488289006aae56d460c7b4b1df53deb24cc791a1c81651acf", size = 15196073, upload-time = "2023-08-10T14:19:08.308Z" },
-    { url = "https://files.pythonhosted.org/packages/06/b9/ff88006843b9bf7e7b44616e58a65ad385b747a942f4b924999eba3a3f5c/arbor-0.9.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:af6fc08579eb77fa7d01453467e036bec09c5b68a196cfcb9451fe5f92595134", size = 25933055, upload-time = "2023-08-10T14:19:12.536Z" },
-    { url = "https://files.pythonhosted.org/packages/24/5e/3768b0ebd69bcec55106a72321320d04e442ab843afb3cd3f50871aacb8c/arbor-0.9.0-cp38-cp38-macosx_10_15_universal2.whl", hash = "sha256:ff187c4063432cbd830568cac9b225e7764a9e6d03ae63fc4fd5898b884a1772", size = 15160824, upload-time = "2023-08-10T14:19:23.756Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/29/579baa46e742836698c5ae34460f1636ec3e5db2a91e7cba875c54fd7df1/arbor-0.9.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5ee6b576a619df29e40468265ec62c1db14aec24a010a44c66e66faac71c5e01", size = 25945157, upload-time = "2023-08-10T14:19:28.548Z" },
-    { url = "https://files.pythonhosted.org/packages/ef/15/e53a806db10de4af0d535b0605d4c0f621c72caa6478a667f77fd190f1c9/arbor-0.9.0-cp39-cp39-macosx_10_15_universal2.whl", hash = "sha256:5bfe4669e58766917ba239a2dd5b999d08398225407635e42789694b969c5d19", size = 15161199, upload-time = "2023-08-10T14:19:32.551Z" },
-    { url = "https://files.pythonhosted.org/packages/3e/56/d14c56673a69c0019b00ab6174cad668ca996637bda161ec68491ea319b1/arbor-0.9.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:267c7ff2a408d9985bd3d5f06762a9bdaee4e3aa219d08c3866480b6d4e44ce0", size = 25940345, upload-time = "2023-08-10T14:19:38.307Z" },
-    { url = "https://files.pythonhosted.org/packages/02/91/ae0f07e5b929dd259f4b932518ea0fcad9b38715fdc706353e50018c30cd/arbor-0.9.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7039db892a300bcbbe8a43c55dfe917eeb8a626c17cbe6135c219bf5cf6fee0f", size = 25945420, upload-time = "2023-08-10T14:19:46.95Z" },
-    { url = "https://files.pythonhosted.org/packages/4d/7c/8a084c95af482f3733b05b8d031a17b81cd3cbb9cdc6a44844d12ff17d3e/arbor-0.9.0-pp38-pypy38_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:14367c5d7244c7f45e790e54efa943380face1f4c1c5d2c2e2f2059b6471a838", size = 25942547, upload-time = "2023-08-10T14:20:01.617Z" },
-    { url = "https://files.pythonhosted.org/packages/08/71/d1c6a388b29d3a86b596b212720b88bb8c5aceac91ceec578349bb449809/arbor-0.9.0-pp39-pypy39_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fd7228179fb52be339071f405eb663ee04ad4c9d8a25b0d63e372beb24aa4714", size = 25934741, upload-time = "2023-08-10T14:20:08.33Z" },
-]
-
-[[package]]
-name = "arbor"
-version = "0.10.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.9.*'",
-]
-dependencies = [
-    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/31/d0/98c1f99b81072228fccf1a75bbc1c728ea2485552035801ad53b36b9922d/arbor-0.10.0.tar.gz", hash = "sha256:f68fffc6b3d311cbfbf45c5108394d275bec867139a2ba7e37bfb5d0437426f1", size = 19037291, upload-time = "2024-08-09T15:41:29.338Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/c5/41db3ba21e4a816a8234b48bb28567fcf49a238beb08ab429ca647951b50/arbor-0.10.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:1698629c6402cd39c0a4be543227a78e19057ac91fa0c1ebdc975bbf9bf34448", size = 8498869, upload-time = "2024-08-09T15:37:59.41Z" },
-    { url = "https://files.pythonhosted.org/packages/c5/de/b2afe9210a33bb1091feed06a86f672e784c70a416098a79b82c55f4e23b/arbor-0.10.0-cp310-cp310-macosx_12_0_x86_64.whl", hash = "sha256:ac4c15761e7c8e71cd7af3aafae0a48a65d4fe7e766ade58feee8a7da199fcfb", size = 8800758, upload-time = "2024-08-09T15:38:04.934Z" },
-    { url = "https://files.pythonhosted.org/packages/cd/94/f015e6642b9617c38f59e633632b902a14519cbd1c8d97756a0246bfcc03/arbor-0.10.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:044777ae71c43f445d0d6f43e3f7ccf829f52b39711c0db83c68d48948735cd6", size = 30724176, upload-time = "2024-08-09T15:38:33.16Z" },
-    { url = "https://files.pythonhosted.org/packages/f4/b5/0c5c6bc204b59f20fc0db4fbe8e0fe53404da1c34d0c42f6681ee441d563/arbor-0.10.0-cp311-cp311-macosx_12_0_arm64.whl", hash = "sha256:f479dc5b5cf6472096ca1e80164527d639c163ecd6e3bcf557f1de27daac1869", size = 8500560, upload-time = "2024-08-09T15:38:39.404Z" },
-    { url = "https://files.pythonhosted.org/packages/cd/2c/aa56917aeae4606268d6b1dda285a2253e8b6f3323220cecd8222fc2c0d7/arbor-0.10.0-cp311-cp311-macosx_12_0_x86_64.whl", hash = "sha256:cbedc0f6f49bb27dd83874ae086aad7c396fa0269486004498d931a46bab6825", size = 8802613, upload-time = "2024-08-09T15:38:45.889Z" },
-    { url = "https://files.pythonhosted.org/packages/34/d1/4d1d7fa98948dfb9eba370abf796fd19068a2af9c6a7be3d13984063ecce/arbor-0.10.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:aac17977d5ba640fe2e932d85f5bc095c0adbb9a4d2d4fca731dd5c4c2a79b39", size = 30725996, upload-time = "2024-08-09T15:39:06.528Z" },
-    { url = "https://files.pythonhosted.org/packages/e6/07/d33b4908909b0c880707fecde9bdcac3b196090137bb69c6088b53ef5000/arbor-0.10.0-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:184394bc21f8bd51acb2611d809d17420795b969214a8b4697bfd0c146a0394f", size = 8510611, upload-time = "2024-08-09T15:39:13.551Z" },
-    { url = "https://files.pythonhosted.org/packages/b6/b3/fe27c663ef3aa0c79c46921c77a203de15898d4557140162be9196d1423e/arbor-0.10.0-cp312-cp312-macosx_12_0_x86_64.whl", hash = "sha256:90d3dbdd75b1c1d3a6cd2c1240a8f40917fc616614bf064a6c1cc893e15c8400", size = 8818622, upload-time = "2024-08-09T15:39:20.298Z" },
-    { url = "https://files.pythonhosted.org/packages/39/9a/f719aa8b6f85db962e7717d5d385a850d4f4f9a08582b0a7084a97724357/arbor-0.10.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ea7cfd5c7e2349e3797f1ad9b1aece8834e78c92911431f8377f7eac02f146a9", size = 30718069, upload-time = "2024-08-09T15:39:37.612Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/d3/bf2ccc87c71cdc0a078b4142f91983f16739c47e0cbf49eee5b096a803e6/arbor-0.10.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:a8adaef8112d052b5e0fcbfa5507b6b9ef6fd4a03323e18629c08f9db973d013", size = 8510649, upload-time = "2024-08-09T15:39:43.367Z" },
-    { url = "https://files.pythonhosted.org/packages/80/a1/c44c5a382f61debce77d5db956cca7a008e1fc4d859a0e294e4af5038d5f/arbor-0.10.0-cp313-cp313-macosx_12_0_x86_64.whl", hash = "sha256:18505595e38070fec4602599172fffb23411b7c71b43e1e8e1bbef34614c8385", size = 8818693, upload-time = "2024-08-09T15:39:50.366Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/87/5c32e05f9fcdd376189fcb88df69e3017164dd6a19938473c2a4908698a7/arbor-0.10.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:697829c0d4df6f15371dab02085bae52e6d9f64f863674013370b5097ca905d3", size = 30725561, upload-time = "2024-08-09T15:40:08.014Z" },
-    { url = "https://files.pythonhosted.org/packages/6d/21/6b58b61295c86d28642299cfc7f6fff4c724c96d07336c68f71f82e1b98d/arbor-0.10.0-cp39-cp39-macosx_12_0_arm64.whl", hash = "sha256:41406ace892243ecae35c684f40d14f41a886269e6383128c30b45f0b0e58d86", size = 8498838, upload-time = "2024-08-09T15:36:51.707Z" },
-    { url = "https://files.pythonhosted.org/packages/87/5d/3182386ab88310977304dbad36af5d2870fa42bc7acc02b06a580831132e/arbor-0.10.0-cp39-cp39-macosx_12_0_x86_64.whl", hash = "sha256:c6598110cfbf0aadd425d7845560c8da6a739039567f1efd351a7074420ba20f", size = 8800788, upload-time = "2024-08-09T15:37:36.541Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/77/9a98775a6182355177248f8b7bb7db4695dbb0321394e285b9b2b113267a/arbor-0.10.0-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0184843d972cf10106e8c1628fedd3ac1d3a35b7c91366551eb1bf2ef0ec9420", size = 30723180, upload-time = "2024-08-09T15:37:53.607Z" },
-    { url = "https://files.pythonhosted.org/packages/0b/40/1860ec1c01da46e7a6bda7f1c4ab58ad08f6c9b1eca53b2ee222206e355b/arbor-0.10.0-pp310-pypy310_pp73-macosx_12_0_arm64.whl", hash = "sha256:0b5fd9a387cd967defb1e5856a857b847b58e337d8051f4b9e354f8c769440aa", size = 8504159, upload-time = "2024-08-09T15:40:48.356Z" },
-    { url = "https://files.pythonhosted.org/packages/71/06/0f208513ec895c4b7478225d038b91a3ef7657ce82993bca47ce2db25482/arbor-0.10.0-pp310-pypy310_pp73-macosx_12_0_x86_64.whl", hash = "sha256:907526df6328070f294373fb305fd5e06091fae432fd8e790a5f0ceba9ced9be", size = 9047502, upload-time = "2024-08-09T15:40:55.247Z" },
-    { url = "https://files.pythonhosted.org/packages/7d/a4/703fb0dcd9056500a8f935e80abbc603853a4749c6f8cd559237672ae531/arbor-0.10.0-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:efeebe59079880e36a8f6b4e8c4ab12fc5b32e78fc770606a3152e3e5b1c8836", size = 30714929, upload-time = "2024-08-09T15:41:11.666Z" },
-    { url = "https://files.pythonhosted.org/packages/43/49/250294211977d0844319c6cca439a1443e0ed955a60422095d2859311dda/arbor-0.10.0-pp39-pypy39_pp73-macosx_12_0_arm64.whl", hash = "sha256:4e412cc5c98f9121bb55fe902cb824a0f055bef382413f2dd1202c84480bb2ed", size = 8504182, upload-time = "2024-08-09T15:40:15.741Z" },
-    { url = "https://files.pythonhosted.org/packages/6d/fd/cf196698965fd88e5ad2aa22676626262f2bc83d35b3862359c9fab959a6/arbor-0.10.0-pp39-pypy39_pp73-macosx_12_0_x86_64.whl", hash = "sha256:3763adcd10535a320277bc6867cc0dcc9c4e360942f1bda01aa94ce821a785b1", size = 9047439, upload-time = "2024-08-09T15:40:22.457Z" },
-    { url = "https://files.pythonhosted.org/packages/47/f1/9967ce964711e49b6643636798dae0fa563a5d0f1ae9a42ddc238f9ea0c5/arbor-0.10.0-pp39-pypy39_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:06ef5baf829ea294e8a68c47cbbf69f54485191328ba8be533aecd3b1008b0ef", size = 30721538, upload-time = "2024-08-09T15:40:40.889Z" },
-]
-
-[[package]]
-name = "arbor"
-version = "0.11.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14'",
-    "python_full_version >= '3.12' and python_full_version < '3.14'",
-    "python_full_version == '3.11.*'",
-    "python_full_version == '3.10.*'",
-]
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a9/6d/26db6604ae1630d7f6ce4c88320764335ce68b65483e870441e9622c2b7f/arbor-0.11.0.tar.gz", hash = "sha256:935129c7665088eda2fa3b36ad5ca3fc7cb242cae1582cb0835a42e534ebedcc", size = 8266880, upload-time = "2025-04-24T18:42:40.174Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/07/80801eefdad23f256e76ccc4ba2ce881faec1fec65d166bcca69819de8f5/arbor-0.11.0-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:58ed19ace6ceba4b2fc00be4ccd214058da6bae5b9cc91770b9f4e51410afe3b", size = 9871410, upload-time = "2025-04-24T18:35:31.609Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/a2/c253eb2e2d06e7fd77668419102edbc88908fd69cd2f66f65e107c3c1147/arbor-0.11.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2186744c32c634378cb4433379d4b976a62ae2bf7d689709202180d37a0b9638", size = 35694396, upload-time = "2025-04-24T18:36:39.365Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/e1/3e3e80c07350fa3242a8cc0886fbc9a5d1ed36ef041acf0cbdbc478fa0f8/arbor-0.11.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:ff5a022207d9920f4b8a3402d2031e99738ec6ed9c40265685c2dc9aed7eb92e", size = 9873244, upload-time = "2025-04-24T18:36:43.602Z" },
-    { url = "https://files.pythonhosted.org/packages/8f/bf/04d94e70501255e9aa3274db7f20106f8d4855664aeeccae49efd9227772/arbor-0.11.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b890190a740e658b70b5c3ad55e675cc2a163975efd575f13130d582b4a35b15", size = 35694677, upload-time = "2025-04-24T18:36:51.621Z" },
-    { url = "https://files.pythonhosted.org/packages/95/9d/59d8dbb305a7f0a1b707b9f48628984f17ac0c09caf2ce5c998bf358ec0d/arbor-0.11.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:0e0689ec55ced11e30a6cdb69b00e656962293df99dbf4899d277bccf27ceb2f", size = 9880733, upload-time = "2025-04-24T18:36:55.6Z" },
-    { url = "https://files.pythonhosted.org/packages/fb/25/2e311ee30a7c59247064615f85514973a7034916217676e11a083f16aa90/arbor-0.11.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c0172300391644d210c61b5b9ceaa0c3b0903689ad55782b327c06ea12bfaf65", size = 35690108, upload-time = "2025-04-24T18:37:03.918Z" },
-    { url = "https://files.pythonhosted.org/packages/59/b7/5b860c0695117bca7ae0fb8d5e552029728501a4234c6bc814f535d1b95c/arbor-0.11.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:77c1df0ce9772473a8efad9ad4e355237a3b479d11e425d9af8d837b61327b53", size = 9881430, upload-time = "2025-04-24T18:37:08.335Z" },
-    { url = "https://files.pythonhosted.org/packages/68/db/71aa94da1eec6f825914ae4a57ab168962d74bc157b793fa48e6812a8019/arbor-0.11.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1a994b1afba1dddc8d61508f3784dcc545433ab85a1d4b0d0e3ec7acb581b0e4", size = 35687490, upload-time = "2025-04-24T18:37:16.246Z" },
 ]
 
 [[package]]
@@ -1553,9 +1465,6 @@ wheels = [
 name = "gencomo"
 source = { editable = "." }
 dependencies = [
-    { name = "arbor", version = "0.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "arbor", version = "0.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-    { name = "arbor", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "h5py", version = "3.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "h5py", version = "3.14.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "ipykernel", version = "6.29.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
@@ -1637,7 +1546,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arbor", specifier = ">=0.9.0" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "flake8", marker = "extra == 'dev'" },
     { name = "h5py", specifier = ">=3.6.0" },

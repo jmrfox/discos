@@ -1,36 +1,193 @@
-# gencomo: GENeral-morphology COmpartmental MOdeling
+# DISCOS: DISrete COllinear Skeletonization
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-GenCoMo is a Python package for compartmental simulation of neurons with complex morphologies using mesh-based geometric approaches. Unlike traditional neuron simulation software that relies on simplified cylinder-based models (like NEURON's SWC format), GenCoMo works directly with detailed neuronal mesh geometries to create more accurate compartmental models.
+DISCOS is a Python package for 3D mesh manipulation and skeletonization of complex neuronal morphologies. It provides tools for processing neuronal meshes, performing segmentation using discrete collinear skeletonization algorithms, and converting the results to SWC format for use in simulation software.
 
 ## Key Features
 
-- **Mesh-based compartmentalization**: Work directly with neuronal meshes instead of simplified cylinder models
-- **Z-stack conversion**: Convert 3D meshes to binary z-stack representations for analysis
-- **Interactive visualization**: Explore z-stack slices interactively with slider controls
-- **Z-axis slicing**: Automatically slice complex morphologies along the z-axis
-- **Region detection**: Identify closed regions within each slice for compartment generation
-- **Graph construction**: Build connectivity between compartments across adjacent z-levels
-- **Biophysical simulation**: Solve coupled ODEs for membrane potential using Hodgkin-Huxley dynamics
-- **Flexible stimulation**: Support for complex stimulation protocols
-- **Analysis tools**: Built-in analysis for spike detection, propagation velocity, and more
-- **Demo functions**: Pre-built functions for creating test geometries (cylinders, Y-shapes, meshes with holes)
+- **3D Mesh Processing**: Load, manipulate, and analyze neuronal mesh geometries
+- **Collinear Skeletonization**: Advanced skeletonization algorithm for complex morphologies  
+- **Mesh Segmentation**: Systematic segmentation of meshes into meaningful components
+- **Graph-based Representation**: Build connectivity graphs from segmented meshes
+- **SWC Export**: Convert processed meshes to SWC format for simulation software
+- **Interactive Visualization**: Explore mesh data and segmentation results
+- **Demo Functions**: Pre-built functions for creating test geometries and workflows
 
 ## Installation
 
 ### From source
 
 ```bash
-git clone https://github.com/jmrfox/gencomo.git
-cd gencomo
+git clone https://github.com/jmrfox/discos.git
+cd discos
 pip install -e .
 ```
 
 ### Dependencies
 
-GenCoMo requires several scientific computing packages:
+DISCOS requires several scientific computing packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+Key dependencies include:
+
+- `numpy`, `scipy` - numerical computing
+- `trimesh` - mesh processing
+- `networkx` - graph algorithms for connectivity
+- `matplotlib`, `plotly` - visualization (optional)
+
+## Quick Start
+
+### Basic Workflow
+
+```python
+import discos as dc
+
+# 1. Load a neuronal mesh
+mesh_manager = dc.MeshManager()
+mesh = mesh_manager.load_mesh("path/to/neuron.stl")
+
+# 2. Segment the mesh
+segmenter = dc.MeshSegmenter(mesh)
+segments, graph = segmenter.segment_mesh(num_slices=50)
+
+# 3. Export to SWC format
+swc_data = graph.export_to_swc()
+swc_data.save("neuron_skeleton.swc")
+```
+
+### Working with Demo Functions
+
+DISCOS includes built-in demo functions for creating test geometries:
+
+```python
+from discos import (
+    create_cylinder_mesh,
+    create_torus_mesh, 
+    create_branching_mesh,
+    create_demo_neuron_mesh
+)
+
+# Create demo meshes
+cylinder = create_cylinder_mesh(radius=5.0, height=20.0)
+torus = create_torus_mesh(major_radius=10.0, minor_radius=3.0)
+branching = create_branching_mesh(trunk_radius=4.0, branch_angle=45.0)
+```
+
+## Core Concepts
+
+**Mesh Processing**: DISCOS starts with a 3D mesh representing the neuronal membrane. The mesh is preprocessed (centered, aligned, validated) before analysis.
+
+**Segmentation**: The mesh is systematically segmented into meaningful components using z-axis slicing and region detection algorithms.
+
+**Graph Construction**: Connections between segments are established based on geometric relationships, creating a graph representation of the morphology.
+
+**Discrete Collinear Skeletonization**: DISCOS uses a specialized discrete collinear skeletonization algorithm designed for neuronal morphologies, different from traditional neural skeletonization approaches.
+
+**SWC Export**: The final graph structure is converted to SWC format, providing compatibility with simulation software like NEURON and Arbor.
+
+## API Reference
+
+### Core Classes
+
+- `MeshManager` - Mesh loading and preprocessing
+- `MeshSegmenter` - Mesh segmentation and analysis
+- `Segment` - Individual mesh segment representation
+- `SegmentGraph` - Graph of segment connectivity
+- `SWCData` - SWC format data container
+
+### Key Parameters
+
+**Segmentation Parameters**:
+
+- `num_slices` - Number of z-axis slices for segmentation
+- `min_area` - Minimum area threshold for valid segments
+- `connection_method` - Method for establishing segment connectivity
+
+**Export Parameters**:
+
+- `scale_factor` - Scaling factor for SWC coordinates
+- `cycle_breaking_strategy` - Strategy for handling cycles in graph
+
+## Testing
+
+Run the test suite:
+
+```bash
+pytest tests/
+```
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+
+```bash
+git clone https://github.com/jmrfox/discos.git
+cd discos
+pip install -e ".[dev]"
+```
+
+## Development Environment
+
+**Recommended Setup:**
+
+- **Python Package Manager**: [uv](https://github.com/astral-sh/uv) (fast Python package manager)
+- **Python Version**: 3.8+
+
+**Installation with uv:**
+
+```bash
+# Clone and install DISCOS
+git clone https://github.com/jmrfox/discos.git
+cd discos
+uv sync  # Install dependencies and create virtual environment
+```
+
+**Usage with uv:**
+
+```bash
+# Run Python scripts
+uv run python your_script.py
+
+# Run tests
+uv run pytest
+
+# Add new dependencies
+uv add package-name
+```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Citation
+
+If you use DISCOS in your research, please cite:
+
+```bibtex
+@software{discos,
+  title={DISCOS: DISrete COllinear Skeletonization},
+  author={Fox, Jordan},
+  year={2025},
+  url={https://github.com/jmrfox/discos}
+}
+```
+
+## Support
+
+- **Documentation**: [GitHub Wiki](https://github.com/jmrfox/discos/wiki)
+- **Issues**: [GitHub Issues](https://github.com/jmrfox/discos/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jmrfox/discos/discussions)
+
+### Dependencies
+
+DISCOS requires several scientific computing packages:
 
 ```bash
 pip install -r requirements.txt
@@ -49,7 +206,7 @@ Key dependencies include:
 
 ```python
 import numpy as np
-from gencomo import MeshProcessor, ZAxisSlicer, RegionDetector, GraphBuilder, Neuron, Simulator
+from discos import MeshProcessor, ZAxisSlicer, RegionDetector, GraphBuilder, Neuron, Simulator
 
 # 1. Load and process a neuronal mesh
 mesh_processor = MeshProcessor()
@@ -58,7 +215,7 @@ mesh_processor.center_mesh()
 mesh_processor.align_with_z_axis()
 
 # Alternative: Work with z-stack representations
-from gencomo import mesh_to_zstack, visualize_zstack_slices
+from discos import mesh_to_zstack, visualize_zstack_slices
 zstack = mesh_to_zstack(mesh, resolution=(100, 100, 50))
 visualize_zstack_slices(zstack)  # Interactive slice viewer
 
@@ -107,11 +264,11 @@ if results.success:
 
 ### Working with Demo Functions
 
-GenCoMo includes built-in demo functions for creating test geometries:
+DISCOS includes built-in demo functions for creating test geometries:
 
 ```python
-from gencomo import create_cylinder_mesh, create_y_shaped_mesh, create_mesh_with_hole
-from gencomo import create_cylinder_zstack, visualize_zstack_3d
+from discos import create_cylinder_mesh, create_y_shaped_mesh, create_mesh_with_hole
+from discos import create_cylinder_zstack, visualize_zstack_3d
 
 # Create demo meshes
 cylinder = create_cylinder_mesh(radius=5.0, height=20.0)
@@ -332,8 +489,8 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 ### Development Setup
 
 ```bash
-git clone https://github.com/jmrfox/gencomo.git
-cd gencomo
+git clone https://github.com/jmrfox/discos.git
+cd discos
 pip install -e ".[dev]"
 ```
 
@@ -386,9 +543,9 @@ If you use GenCoMo in your research, please cite:
 
 ## Support
 
-- **Documentation**: [GitHub Wiki](https://github.com/jmrfox/gencomo/wiki)
-- **Issues**: [GitHub Issues](https://github.com/jmrfox/gencomo/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/jmrfox/gencomo/discussions)
+- **Documentation**: [GitHub Wiki](https://github.com/jmrfox/discos/wiki)
+- **Issues**: [GitHub Issues](https://github.com/jmrfox/discos/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jmrfox/discos/discussions)
 
 ## Development Environment
 
@@ -406,8 +563,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh  # Unix/macOS
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"  # Windows
 
 # Clone and install GenCoMo
-git clone https://github.com/jmrfox/gencomo.git
-cd gencomo
+git clone https://github.com/jmrfox/discos.git
+cd discos
 uv sync  # Install dependencies and create virtual environment
 ```
 

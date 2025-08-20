@@ -5,15 +5,15 @@ Test script for mesh functionality.
 import sys
 import os
 
-# Add the parent directory to path for importing gencomo
+# Add the parent directory to path for importing discos
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 import pytest
 import trimesh
 
-from gencomo.demos import create_cylinder_mesh, create_torus_mesh
-from gencomo.mesh import MeshManager
+from discos.demos import create_cylinder_mesh, create_torus_mesh
+from discos.mesh import MeshManager
 
 
 class TestCreateCylinderMesh:

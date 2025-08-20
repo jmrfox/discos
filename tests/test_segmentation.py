@@ -12,7 +12,7 @@ This test script methodically validates the MeshSegmenter class by:
 import sys
 import os
 
-# Add the parent directory to path for importing gencomo
+# Add the parent directory to path for importing discos
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
@@ -20,8 +20,8 @@ import pytest
 import trimesh
 import warnings
 
-from gencomo.demos import create_cylinder_mesh, create_torus_mesh
-from gencomo.segmentation import MeshSegmenter
+from discos.demos import create_cylinder_mesh, create_torus_mesh
+from discos.segmentation import MeshSegmenter
 
 
 class TestMeshSegmenterBasic:
@@ -298,7 +298,7 @@ class TestMeshSegmenterIntegration:
         segment_graph = segmenter.segment_mesh(cylinder, slice_height=5.0, return_segment_graph=True)
         
         # Check that we get a SegmentGraph
-        from gencomo.segmentation import SegmentGraph
+        from discos.segmentation import SegmentGraph
         assert isinstance(segment_graph, SegmentGraph)
         
         # Check graph properties
