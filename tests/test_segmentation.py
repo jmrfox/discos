@@ -44,27 +44,27 @@ class TestMeshSegmenterBasic:
         assert segmenter.original_mesh is None
         assert segmenter.slice_height is None
         assert segmenter.cross_sections == []
-        assert segmenter.segments == []
-        assert segmenter.slices == []
+        assert len(segmenter.graph.points_list) == 0
+        assert len(segmenter.graph.segments_list) == 0
         
     def test_segment_mesh_basic(self, segmenter, test_cylinder):
         """Test basic mesh segmentation functionality."""
         slice_height = 10.0
-        segments = segmenter.segment_mesh(test_cylinder, slice_height)
+        graph = segmenter.segment_mesh(test_cylinder, slice_height)
         
-        # Check that we get segments
-        assert len(segments) > 0
+        # Check that we get a SegmentGraph
+        from discos.segmentation import SegmentGraph
+        assert isinstance(graph, SegmentGraph)
+        assert len(graph.points_list) > 0
+        assert len(graph.segments_list) > 0
         assert segmenter.original_mesh is not None
         assert segmenter.slice_height == slice_height
         
         # Check segment properties
-        for segment in segments:
+        for segment in graph.segments_list:
             assert hasattr(segment, 'id')
             assert hasattr(segment, 'volume')
-            assert hasattr(segment, 'external_surface_area')
-            assert hasattr(segment, 'internal_surface_area')
             assert segment.volume > 0
-            assert segment.external_surface_area > 0
 
 
 class TestMeshSegmenterVolumeConservation:
@@ -104,20 +104,20 @@ class TestMeshSegmenterVolumeConservation:
         length = test_cylinder_params["length"]
         slice_height = length  # Full length - should create 1 segment
         
-        segments = segmenter.segment_mesh(test_cylinder, slice_height)
+        graph = segmenter.segment_mesh(test_cylinder, slice_height)
         
         # Should have exactly 1 segment
-        assert len(segments) == 1
+        assert len(graph.segments_list) == 1
         
         # Check volume conservation
-        total_segment_volume = sum(seg.volume for seg in segments)
+        total_segment_volume = sum(seg.volume for seg in graph.segments_list)
         volume_error_percent = abs(total_segment_volume - theoretical_volume) / theoretical_volume * 100
         
         # Volume should be conserved within 5%
         assert volume_error_percent < 5.0, f"Volume error {volume_error_percent:.2f}% exceeds 5%"
         
         # Check that segment volume is close to theoretical
-        assert abs(segments[0].volume - theoretical_volume) / theoretical_volume < 0.05
+        assert abs(graph.segments_list[0].volume - theoretical_volume) / theoretical_volume < 0.05
     
     def test_volume_conservation_half_length(self, test_cylinder, test_cylinder_params, theoretical_volume):
         """Test volume conservation with slice_height = L/2."""
@@ -125,13 +125,13 @@ class TestMeshSegmenterVolumeConservation:
         length = test_cylinder_params["length"]
         slice_height = length / 2  # Half length - should create 2 segments
         
-        segments = segmenter.segment_mesh(test_cylinder, slice_height)
+        graph = segmenter.segment_mesh(test_cylinder, slice_height)
         
         # Should have 2 segments
-        assert len(segments) == 2
+        assert len(graph.segments_list) == 2
         
         # Check volume conservation
-        total_segment_volume = sum(seg.volume for seg in segments)
+        total_segment_volume = sum(seg.volume for seg in graph.segments_list)
         volume_error_percent = abs(total_segment_volume - theoretical_volume) / theoretical_volume * 100
         
         # Volume should be conserved within 5%
@@ -139,7 +139,7 @@ class TestMeshSegmenterVolumeConservation:
         
         # Each segment should have approximately half the volume
         expected_segment_volume = theoretical_volume / 2
-        for segment in segments:
+        for segment in graph.segments_list:
             segment_error = abs(segment.volume - expected_segment_volume) / expected_segment_volume
             assert segment_error < 0.1, f"Individual segment volume error {segment_error:.2f} exceeds 10%"
     
@@ -149,13 +149,13 @@ class TestMeshSegmenterVolumeConservation:
         length = test_cylinder_params["length"]
         slice_height = length / 3  # Third length - should create 3 segments
         
-        segments = segmenter.segment_mesh(test_cylinder, slice_height)
+        graph = segmenter.segment_mesh(test_cylinder, slice_height)
         
         # Should have 3 segments
-        assert len(segments) == 3
+        assert len(graph.segments_list) == 3
         
         # Check volume conservation
-        total_segment_volume = sum(seg.volume for seg in segments)
+        total_segment_volume = sum(seg.volume for seg in graph.segments_list)
         volume_error_percent = abs(total_segment_volume - theoretical_volume) / theoretical_volume * 100
         
         # Volume should be conserved within 5%
@@ -163,7 +163,7 @@ class TestMeshSegmenterVolumeConservation:
         
         # Each segment should have approximately one third the volume
         expected_segment_volume = theoretical_volume / 3
-        for segment in segments:
+        for segment in graph.segments_list:
             segment_error = abs(segment.volume - expected_segment_volume) / expected_segment_volume
             assert segment_error < 0.1, f"Individual segment volume error {segment_error:.2f} exceeds 10%"
 

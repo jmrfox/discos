@@ -188,7 +188,7 @@ class CrossSection:
 
 
 @dataclass
-class GraphNode:
+class Point:
     """Represents a spatial point (center of cross-section) in the new graph architecture."""
 
     id: str
@@ -201,34 +201,18 @@ class GraphNode:
 
 
 @dataclass
-class GraphEdge:
-    """Represents a cylindrical segment connecting two nodes."""
-
-    id: str
-    node1_id: str
-    node2_id: str
-    length: float
-    radius1: float  # Radius at node1
-    radius2: float  # Radius at node2
-    center_line: np.ndarray  # 3D line from node1 to node2
-    volume: float  # Approximate cylinder volume
-
-
-@dataclass
 class Segment:
-    """Legacy segment class - kept for compatibility during transition."""
+    """Represents a cylindrical segment connecting two points."""
 
     id: str
-    slice_index: int
-    segment_index: int  # Index within the slice
-    mesh: trimesh.Trimesh
-    volume: float
-    external_surface_area: float  # Original mesh faces
-    internal_surface_area: float  # Cut faces from slicing
-    centroid: np.ndarray
-    z_min: float
-    z_max: float
-
+    point1_id: str
+    point2_id: str
+    length: float
+    radius1: float  # Radius at point1
+    radius2: float  # Radius at point2
+    center_line: np.ndarray  # 3D line from point1 to point2
+    volume: float  # Approximate cylinder volume
+    surface_area: float  # Approximate cylinder surface area
 
 @dataclass
 class SWCData:
@@ -324,218 +308,16 @@ class SWCData:
         return summary
 
 
-class NodeEdgeGraph(nx.Graph):
-    """Graph representation using the new node-edge architecture.
-
-    In this architecture:
-    - Nodes represent spatial points (centers of cross-sections)
-    - Edges represent cylindrical segments connecting those points
-    - Edge attributes contain cylinder metadata (length, radii, volume)
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.nodes_list: List[GraphNode] = []
-        self.edges_list: List[GraphEdge] = []
-        self.node_dict: Dict[str, GraphNode] = {}
-        self.edge_dict: Dict[str, GraphEdge] = {}
-
-    def add_graph_node(self, node: GraphNode) -> None:
-        """Add a GraphNode to the graph."""
-        self.nodes_list.append(node)
-        self.node_dict[node.id] = node
-
-        # Add to NetworkX graph with node attributes
-        self.add_node(
-            node.id,
-            center=node.center,
-            radius=node.radius,
-            z_position=node.z_position,
-            slice_index=node.slice_index,
-            cross_section_index=node.cross_section_index,
-        )
-
-    def add_graph_edge(self, edge: GraphEdge) -> None:
-        """Add a GraphEdge to the graph."""
-        self.edges_list.append(edge)
-        self.edge_dict[edge.id] = edge
-
-        # Add to NetworkX graph with edge attributes
-        self.add_edge(
-            edge.node1_id,
-            edge.node2_id,
-            edge_id=edge.id,
-            length=edge.length,
-            radius1=edge.radius1,
-            radius2=edge.radius2,
-            volume=edge.volume,
-            center_line=edge.center_line,
-        )
-
-    def get_node_by_id(self, node_id: str) -> Optional[GraphNode]:
-        """Get GraphNode by ID."""
-        return self.node_dict.get(node_id)
-
-    def get_edge_by_id(self, edge_id: str) -> Optional[GraphEdge]:
-        """Get GraphEdge by ID."""
-        return self.edge_dict.get(edge_id)
-
-    def export_to_swc(
-        self, scale_factor: float = 1.0, radius_method: str = "equivalent_area"
-    ) -> "SWCData":
-        """Export to SWC format using the new node-edge structure."""
-        if len(self.nodes_list) == 0:
-            raise ValueError("Cannot export empty graph to SWC format")
-
-        # Find root node (lowest z-position)
-        root_node = min(self.nodes_list, key=lambda n: n.z_position)
-
-        # Build spanning tree to break cycles
-        tree_edges, non_tree_edges = self._break_cycles_for_swc(root_node.id)
-
-        # Build parent-child relationships
-        parent_map = self._build_parent_map_from_tree(tree_edges, root_node.id)
-
-        # Assign sample IDs
-        node_to_sample_id = self._assign_sample_ids_bfs(root_node.id, tree_edges)
-
-        # Generate SWC entries
-        swc_entries = []
-        for node in sorted(self.nodes_list, key=lambda n: node_to_sample_id[n.id]):
-            x = node.center[0] * scale_factor
-            y = node.center[1] * scale_factor
-            z = node.center[2] * scale_factor
-            r = node.radius * scale_factor
-
-            parent_node_id = parent_map.get(node.id, -1)
-            parent_sample_id = (
-                node_to_sample_id.get(parent_node_id, -1)
-                if parent_node_id != -1
-                else -1
-            )
-
-            sample_id = node_to_sample_id[node.id]
-            type_id = 5  # All nodes use type 5
-
-            swc_entries.append(
-                f"{sample_id} {type_id} {x:.6f} {y:.6f} {z:.6f} {r:.6f} {parent_sample_id}"
-            )
-
-        # Create metadata
-        metadata = {
-            "total_segments": len(self.edges_list),
-            "total_nodes": len(self.nodes_list),
-            "tree_edges": len(tree_edges),
-            "non_tree_edges": len(non_tree_edges),
-        }
-
-        # Format non-tree edges
-        formatted_non_tree_edges = [
-            {
-                "sample_id_1": node_to_sample_id.get(u, None),
-                "sample_id_2": node_to_sample_id.get(v, None),
-                "original_node_1": u,
-                "original_node_2": v,
-            }
-            for u, v in sorted(non_tree_edges)
-        ]
-
-        return SWCData(
-            entries=swc_entries,
-            metadata=metadata,
-            non_tree_edges=formatted_non_tree_edges,
-            root_segment=root_node.id,
-            scale_factor=scale_factor,
-        )
-
-    def _break_cycles_for_swc(self, root_node_id: str) -> Tuple[set, set]:
-        """Break cycles using minimum spanning tree."""
-        # Create weighted graph based on edge lengths
-        weighted_graph = self.copy()
-        for edge in self.edges_list:
-            if weighted_graph.has_edge(edge.node1_id, edge.node2_id):
-                weighted_graph[edge.node1_id][edge.node2_id]["weight"] = edge.length
-
-        # Create minimum spanning tree
-        mst = nx.minimum_spanning_tree(weighted_graph)
-        tree_edges = set(mst.edges())
-
-        # Identify non-tree edges
-        all_edges = set((min(u, v), max(u, v)) for u, v in self.edges())
-        tree_edges_normalized = set((min(u, v), max(u, v)) for u, v in tree_edges)
-        non_tree_edges = all_edges - tree_edges_normalized
-
-        return tree_edges_normalized, non_tree_edges
-
-    def _build_parent_map_from_tree(self, tree_edges: set, root_node_id: str) -> dict:
-        """Build parent-child mapping from tree edges."""
-        # Build adjacency list
-        tree_adj = {}
-        for u, v in tree_edges:
-            if u not in tree_adj:
-                tree_adj[u] = []
-            if v not in tree_adj:
-                tree_adj[v] = []
-            tree_adj[u].append(v)
-            tree_adj[v].append(u)
-
-        # BFS to establish parent-child relationships
-        parent_map = {root_node_id: -1}
-        visited = set([root_node_id])
-        queue = deque([root_node_id])
-
-        while queue:
-            current = queue.popleft()
-            for neighbor in tree_adj.get(current, []):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    parent_map[neighbor] = current
-                    queue.append(neighbor)
-
-        return parent_map
-
-    def _assign_sample_ids_bfs(self, root_node_id: str, tree_edges: set) -> dict:
-        """Assign sample IDs using BFS order."""
-        # Build adjacency list
-        tree_adj = {}
-        for u, v in tree_edges:
-            if u not in tree_adj:
-                tree_adj[u] = []
-            if v not in tree_adj:
-                tree_adj[v] = []
-            tree_adj[u].append(v)
-            tree_adj[v].append(u)
-
-        # BFS assignment
-        node_to_sample_id = {}
-        sample_id = 1
-        queue = deque([root_node_id])
-        visited = set([root_node_id])
-        node_to_sample_id[root_node_id] = sample_id
-        sample_id += 1
-
-        while queue:
-            current = queue.popleft()
-            for neighbor in tree_adj.get(current, []):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    node_to_sample_id[neighbor] = sample_id
-                    sample_id += 1
-                    queue.append(neighbor)
-
-        return node_to_sample_id
-
 
 class SegmentGraph(nx.Graph):
     """
-    Graph representation of segmented mesh.
+    Graph representation of segmented mesh using graph-based architecture.
 
     This class wraps a NetworkX graph to represent the connectivity
-    between segments in a compartmental model. It provides methods
-    for analyzing the graph structure and accessing properties of
-    segments based on their position and connectivity.
-
-    Each node represents a segment, and each edge is a connectivity between segments.
+    between segments in a compartmental model using the graph-based approach:
+    
+    - Nodes represent spatial points (Point objects at cross-section centers)
+    - Edges represent cylindrical segments (Segment objects) connecting those points
 
     Note that this graph is allowed to have cycles, and thus it is not a tree.
     """
@@ -545,6 +327,51 @@ class SegmentGraph(nx.Graph):
         Initialize a SegmentGraph by super()
         """
         super().__init__()
+        # Graph-based architecture support
+        self.points_list: List[Point] = []
+        self.segments_list: List[Segment] = []
+        self.point_dict: Dict[str, Point] = {}
+        self.segment_dict: Dict[str, Segment] = {}
+
+    def add_point(self, point: Point) -> None:
+        """Add a Point to the graph."""
+        self.points_list.append(point)
+        self.point_dict[point.id] = point
+
+        # Add to NetworkX graph with node attributes
+        self.add_node(
+            point.id,
+            center=point.center,
+            radius=point.radius,
+            z_position=point.z_position,
+            slice_index=point.slice_index,
+            cross_section_index=point.cross_section_index,
+        )
+
+    def add_segment(self, segment: Segment) -> None:
+        """Add a Segment to the graph."""
+        self.segments_list.append(segment)
+        self.segment_dict[segment.id] = segment
+
+        # Add to NetworkX graph with edge attributes
+        self.add_edge(
+            segment.point1_id,
+            segment.point2_id,
+            edge_id=segment.id,
+            length=segment.length,
+            radius1=segment.radius1,
+            radius2=segment.radius2,
+            volume=segment.volume,
+            center_line=segment.center_line,
+        )
+
+    def get_point_by_id(self, point_id: str) -> Optional[Point]:
+        """Get Point by ID."""
+        return self.point_dict.get(point_id)
+
+    def get_segment_by_id(self, segment_id: str) -> Optional[Segment]:
+        """Get Segment by ID."""
+        return self.segment_dict.get(segment_id)
 
     def set_segment_properties(
         self, segment_id: str, properties: Dict[str, Any]
@@ -623,110 +450,74 @@ class SegmentGraph(nx.Graph):
             - Tree structure ensures proper parent-child relationships for Arbor compatibility
             - Cycles are broken and non-tree edges are annotated for post-processing
         """
-        if len(self.nodes) == 0:
+        return self._export_to_swc(scale_factor)
+
+    def _export_to_swc(self, scale_factor: float = 1.0) -> "SWCData":
+        """Export graph-based architecture to SWC format."""
+        if len(self.points_list) == 0:
             raise ValueError("Cannot export empty graph to SWC format")
 
-        # Step 1: Find root node (segment with smallest z-coordinate)
-        root_node = min(
-            self.nodes,
-            key=lambda n: self.nodes[n].get("centroid", [0, 0, float("inf")])[2],
-        )
+        # Find root point (lowest z-position)
+        root_point = min(self.points_list, key=lambda p: p.z_position)
 
-        # Step 2: Break cycles by creating spanning tree and identify non-tree edges
-        tree_edges, non_tree_edges = self._break_cycles_and_create_tree(
-            root_node, cycle_breaking_strategy
-        )
+        # Build spanning tree to break cycles
+        tree_edges, non_tree_edges = self._break_cycles_for_swc(root_point.id)
 
-        # Step 3: Build parent-child relationships from spanning tree
-        parent_map = self._build_parent_map_from_tree(tree_edges, root_node)
+        # Build parent-child relationships
+        parent_map = self._build_parent_map_from_tree(tree_edges, root_point.id)
 
-        # Step 4: Assign sample IDs ensuring parent IDs < child IDs (Arbor requirement)
-        node_to_sample_id = self._assign_sample_ids_bfs(root_node, tree_edges)
+        # Assign sample IDs
+        point_to_sample_id = self._assign_sample_ids_bfs(root_point.id, tree_edges)
 
-        # Step 5: Generate SWC entries with type 5 for all segments
+        # Generate SWC entries
         swc_entries = []
+        for point in sorted(self.points_list, key=lambda p: point_to_sample_id[p.id]):
+            x = point.center[0] * scale_factor
+            y = point.center[1] * scale_factor
+            z = point.center[2] * scale_factor
+            r = point.radius * scale_factor
 
-        for node_id in sorted(
-            node_to_sample_id.keys(), key=lambda x: node_to_sample_id[x]
-        ):
-            node_data = self.nodes[node_id]
-
-            # Validate that node has centroid data
-            if "centroid" not in node_data:
-                raise ValueError(f"Node {node_id} has no centroid data")
-
-            centroid = node_data.get("centroid", [0, 0, 0])
-            volume = node_data.get("volume", 0)
-
-            # Calculate radius from volume assuming spherical approximation
-            # V = (4/3) * π * r³, so r = (3V / 4π)^(1/3)
-            radius = (3 * volume / (4 * math.pi)) ** (1 / 3) if volume > 0 else 1.0
-
-            # Scale coordinates and radius
-            x = centroid[0] * scale_factor
-            y = centroid[1] * scale_factor
-            z = centroid[2] * scale_factor
-            r = radius * scale_factor
-
-            # Determine parent sample ID
-            parent_node = parent_map.get(node_id, -1)
+            parent_point_id = parent_map.get(point.id, -1)
             parent_sample_id = (
-                node_to_sample_id.get(parent_node, -1) if parent_node != -1 else -1
+                point_to_sample_id.get(parent_point_id, -1)
+                if parent_point_id != -1
+                else -1
             )
 
-            # Use type 5 for all segments
-            type_id = 5
-
-            # SWC entry: SampleID TypeID x y z radius ParentID
-            sample_id_val = node_to_sample_id[node_id]
+            sample_id = point_to_sample_id[point.id]
+            type_id = 5  # All points use type 5
 
             swc_entries.append(
-                f"{sample_id_val} {type_id} {x:.6f} {y:.6f} {z:.6f} {r:.6f} {parent_sample_id}"
+                f"{sample_id} {type_id} {x:.6f} {y:.6f} {z:.6f} {r:.6f} {parent_sample_id}"
             )
 
-        # Step 6: Create SWCData object with streamlined metadata
+        # Create metadata
         metadata = {
-            "total_segments": len(self.nodes),
-            "total_edges": len(self.edges()),
+            "total_segments": len(self.segments_list),
+            "total_nodes": len(self.points_list),
             "tree_edges": len(tree_edges),
             "non_tree_edges": len(non_tree_edges),
-            "cycle_breaking_strategy": cycle_breaking_strategy,
         }
 
-        # Format non-tree edges for SWCData
+        # Format non-tree edges
         formatted_non_tree_edges = [
             {
-                "sample_id_1": node_to_sample_id.get(u, None),
-                "sample_id_2": node_to_sample_id.get(v, None),
+                "sample_id_1": point_to_sample_id.get(u, None),
+                "sample_id_2": point_to_sample_id.get(v, None),
                 "original_node_1": u,
                 "original_node_2": v,
-                "centroid_1": self.nodes[u].get("centroid", [0, 0, 0]),
-                "centroid_2": self.nodes[v].get("centroid", [0, 0, 0]),
             }
             for u, v in sorted(non_tree_edges)
         ]
 
-        swc_data = SWCData(
+        return SWCData(
             entries=swc_entries,
             metadata=metadata,
             non_tree_edges=formatted_non_tree_edges,
-            root_segment=root_node,
+            root_segment=root_point.id,
             scale_factor=scale_factor,
         )
 
-        print(f"✅ Generated SWC data for {len(self.nodes)} segments")
-        print(f"   - All segments use type ID 5")
-        print(
-            f"   - Root segment: {root_node} (sample ID: {node_to_sample_id[root_node]})"
-        )
-        print(f"   - Tree edges: {len(tree_edges)}")
-        print(f"   - Non-tree edges (annotated): {len(non_tree_edges)}")
-        if non_tree_edges:
-            print(
-                f"   ⚠️  {len(non_tree_edges)} cycle-breaking connections need post-processing in Arbor"
-            )
-
-        return swc_data
 
     def _break_cycles_and_create_tree(
         self, root_node: str, strategy: str = "minimum_spanning_tree"
@@ -847,6 +638,84 @@ class SegmentGraph(nx.Graph):
                     queue.append(neighbor)
 
         return node_to_sample_id
+
+
+    def _break_cycles_for_swc(self, root_point_id: str) -> Tuple[set, set]:
+        """Break cycles using minimum spanning tree for graph-based architecture."""
+        # Create weighted graph based on segment lengths
+        weighted_graph = self.copy()
+        for segment in self.segments_list:
+            if weighted_graph.has_edge(segment.point1_id, segment.point2_id):
+                weighted_graph[segment.point1_id][segment.point2_id]["weight"] = segment.length
+
+        # Create minimum spanning tree
+        mst = nx.minimum_spanning_tree(weighted_graph)
+        tree_edges = set(mst.edges())
+
+        # Identify non-tree edges
+        all_edges = set((min(u, v), max(u, v)) for u, v in self.edges())
+        tree_edges_normalized = set((min(u, v), max(u, v)) for u, v in tree_edges)
+        non_tree_edges = all_edges - tree_edges_normalized
+
+        return tree_edges_normalized, non_tree_edges
+
+    def _build_parent_map_from_tree(self, tree_edges: set, root_point_id: str) -> dict:
+        """Build parent-child mapping from tree edges for graph-based architecture."""
+        # Build adjacency list
+        tree_adj = {}
+        for u, v in tree_edges:
+            if u not in tree_adj:
+                tree_adj[u] = []
+            if v not in tree_adj:
+                tree_adj[v] = []
+            tree_adj[u].append(v)
+            tree_adj[v].append(u)
+
+        # BFS to establish parent-child relationships
+        parent_map = {root_point_id: -1}
+        visited = set([root_point_id])
+        queue = deque([root_point_id])
+
+        while queue:
+            current = queue.popleft()
+            for neighbor in tree_adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    parent_map[neighbor] = current
+                    queue.append(neighbor)
+
+        return parent_map
+
+    def _assign_sample_ids_bfs(self, root_point_id: str, tree_edges: set) -> dict:
+        """Assign sample IDs using BFS order for graph-based architecture."""
+        # Build adjacency list
+        tree_adj = {}
+        for u, v in tree_edges:
+            if u not in tree_adj:
+                tree_adj[u] = []
+            if v not in tree_adj:
+                tree_adj[v] = []
+            tree_adj[u].append(v)
+            tree_adj[v].append(u)
+
+        # BFS assignment
+        point_to_sample_id = {}
+        sample_id = 1
+        queue = deque([root_point_id])
+        visited = set([root_point_id])
+        point_to_sample_id[root_point_id] = sample_id
+        sample_id += 1
+
+        while queue:
+            current = queue.popleft()
+            for neighbor in tree_adj.get(current, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    point_to_sample_id[neighbor] = sample_id
+                    sample_id += 1
+                    queue.append(neighbor)
+
+        return point_to_sample_id
 
     def visualize(
         self,
@@ -1112,18 +981,32 @@ class SegmentGraph(nx.Graph):
             return None
 
 
-class NodeEdgeSegmenter:
-    """New segmentation algorithm using node-edge architecture.
 
-    This segmenter creates nodes at cross-section centers and edges as
-    cylindrical segments connecting them.
+
+class MeshSegmenter:
+    """
+    Mesh segmentation using graph-based approach.
+
+    Creates points at cross-section centers and segments connecting them.
+
+    ALGORITHM:
+    1. Slice the mesh at regular z-intervals to create cross-sections
+    2. Create points at cross-section centers with calculated radii
+    3. Build connectivity between points in adjacent slices
+    4. Create segments connecting the points
+
+    REQUIREMENTS:
+    - Input mesh must be watertight and represent a single connected volume
+    - Cross-sections within the same slice never overlap
+    - Points in the same slice never connect to each other
+    - Connectivity only exists between adjacent slices
     """
 
     def __init__(self):
         self.original_mesh = None
         self.slice_height = None
         self.cross_sections: List[CrossSection] = []
-        self.graph = NodeEdgeGraph()
+        self.graph = SegmentGraph()
         self.radius_method = "equivalent_area"
         self.circle_fitting_method = "geometric"
 
@@ -1134,8 +1017,11 @@ class NodeEdgeSegmenter:
         radius_method: str = "equivalent_area",
         circle_fitting_method: str = "geometric",
         min_area: float = 1e-6,
-    ) -> NodeEdgeGraph:
-        """Segment mesh using the new node-edge architecture.
+    ) -> SegmentGraph:
+        """
+        Segment mesh using graph-based approach.
+
+        Creates points at cross-section centers and segments connecting them.
 
         Args:
             mesh: Input mesh (must be single closed volume)
@@ -1145,8 +1031,9 @@ class NodeEdgeSegmenter:
             min_area: Minimum cross-section area threshold
 
         Returns:
-            NodeEdgeGraph: Graph with nodes as spatial points and edges as segments
+            SegmentGraph: Graph with points and segments
         """
+        # Validate slice_height
         if slice_height <= 0:
             raise ValueError(f"slice_height must be positive, got {slice_height}")
 
@@ -1154,34 +1041,46 @@ class NodeEdgeSegmenter:
         self.slice_height = slice_height
         self.radius_method = radius_method
         self.circle_fitting_method = circle_fitting_method
+        
+        return self._segment_mesh(mesh, slice_height, min_area)
+
+    def _segment_mesh(
+        self,
+        mesh: trimesh.Trimesh,
+        slice_height: float,
+        min_area: float = 1e-6,
+    ) -> SegmentGraph:
+        """Segment mesh using graph-based approach."""
         self.cross_sections = []
-        self.graph = NodeEdgeGraph()
+        self.graph = SegmentGraph()
 
         # Step 1: Validate input mesh
         self._validate_single_hull_mesh(mesh)
 
-        # Step 2: Compute cross-sections and create nodes
-        self._compute_cross_sections_and_nodes(mesh, min_area)
+        # Step 2: Compute cross-sections and create points
+        self._compute_cross_sections_and_points(mesh, min_area)
 
         # Step 3: Detect overlapping cross-sections (error if found)
         self._validate_no_overlaps()
 
-        # Step 4: Build connectivity between nodes (the tricky part!)
-        self._build_node_connectivity(mesh)
+        # Step 4: Build connectivity between points
+        self._build_point_connectivity(mesh)
 
-        # Step 5: Create edges with cylinder metadata
-        self._create_cylinder_edges()
+        # Step 5: Create segments with cylinder metadata
+        self._create_cylinder_segments()
 
         print(
-            f"✅ Created node-edge graph: {len(self.graph.nodes_list)} nodes, {len(self.graph.edges_list)} edges"
+            f"✅ Created graph: {len(self.graph.points_list)} points, {len(self.graph.segments_list)} segments"
         )
         return self.graph
 
+
     def _validate_single_hull_mesh(self, mesh: trimesh.Trimesh):
-        """Validate that mesh is a single closed volume."""
+        """Step 0: Validate that mesh is a single closed volume."""
         if not mesh.is_watertight:
             raise ValueError("Input mesh must be watertight (closed volume)")
 
+        # Check for multiple disconnected components
         components = mesh.split(only_watertight=False)
         if len(components) > 1:
             raise ValueError(
@@ -1189,10 +1088,23 @@ class NodeEdgeSegmenter:
                 "Mesh must be a single connected volume."
             )
 
-        print(f"✅ Validated single-hull mesh: volume={mesh.volume:.3f}")
+        # Store original bounds for later face classification
+        self.original_bounds = mesh.bounds.copy()
 
-    def _compute_cross_sections_and_nodes(self, mesh: trimesh.Trimesh, min_area: float):
-        """Compute cross-sections and create nodes at their centers."""
+        # Annotate all original faces as "external"
+        if not hasattr(mesh, "face_attributes"):
+            mesh.face_attributes = {}
+        mesh.face_attributes["face_type"] = ["external"] * len(mesh.faces)
+
+        print(
+            f"✅ Validated single-hull mesh: {len(mesh.faces)} external faces, "
+            f"volume={mesh.volume:.3f}"
+        )
+
+
+    # Helper methods
+    def _compute_cross_sections_and_points(self, mesh: trimesh.Trimesh, min_area: float):
+        """Compute cross-sections and create points at their centers."""
         z_min, z_max = mesh.bounds[:, 2]
         z_positions = np.arange(z_min + self.slice_height, z_max, self.slice_height)
 
@@ -1221,25 +1133,25 @@ class NodeEdgeSegmenter:
 
                     for cs_idx, section in enumerate(sections):
                         if section.area > min_area:
-                            cross_section = self._create_cross_section_and_node(
+                            cross_section = self._create_cross_section_and_point(
                                 section, z_pos, slice_idx, cs_idx
                             )
                             self.cross_sections.append(cross_section)
 
                             print(
-                                f"  Created node at z={z_pos:.2f}, area={section.area:.3f}, "
+                                f"  Created point at z={z_pos:.2f}, area={section.area:.3f}, "
                                 f"center={cross_section.center}, radius={cross_section.radius:.3f}"
                             )
 
             except Exception as e:
                 print(f"  Error at z={z_pos:.2f}: {e}")
 
-        print(f"✅ Created {len(self.cross_sections)} cross-sections and nodes")
+        print(f"✅ Created {len(self.cross_sections)} cross-sections and points")
 
-    def _create_cross_section_and_node(
+    def _create_cross_section_and_point(
         self, section_2d, z_pos: float, slice_idx: int, cs_idx: int
     ) -> CrossSection:
-        """Create a cross-section and corresponding graph node."""
+        """Create a cross-section and corresponding graph point."""
         # Get boundary points in 2D
         if hasattr(section_2d, "vertices"):
             boundary_2d = section_2d.vertices
@@ -1276,10 +1188,10 @@ class NodeEdgeSegmenter:
             boundary_points=boundary_2d,
         )
 
-        # Create GraphNode
-        node_id = f"node_{slice_idx}_{cs_idx}"
-        node = GraphNode(
-            id=node_id,
+        # Create Point
+        point_id = f"point_{slice_idx}_{cs_idx}"
+        point = Point(
+            id=point_id,
             z_position=z_pos,
             center=center_3d,
             radius=radius,
@@ -1288,8 +1200,8 @@ class NodeEdgeSegmenter:
             cross_section_index=cs_idx,
         )
 
-        # Add node to graph
-        self.graph.add_graph_node(node)
+        # Add point to graph
+        self.graph.add_point(point)
 
         return cross_section
 
@@ -1343,67 +1255,60 @@ class NodeEdgeSegmenter:
 
         print("✅ No overlapping cross-sections detected")
 
-    def _build_node_connectivity(self, mesh: trimesh.Trimesh):
-        """Build connectivity between nodes in adjacent slices.
+    def _build_point_connectivity(self, mesh: trimesh.Trimesh):
+        """Build connectivity between points in adjacent slices."""
+        print("Building point connectivity through volume analysis...")
 
-        This is the trickiest part - determining which nodes connect through
-        contiguous volume paths.
-        """
-        print("Building node connectivity through volume analysis...")
-
-        # Group nodes by slice
-        nodes_by_slice = {}
-        for node in self.graph.nodes_list:
-            slice_idx = node.slice_index
-            if slice_idx not in nodes_by_slice:
-                nodes_by_slice[slice_idx] = []
-            nodes_by_slice[slice_idx].append(node)
+        # Group points by slice
+        points_by_slice = {}
+        for point in self.graph.points_list:
+            slice_idx = point.slice_index
+            if slice_idx not in points_by_slice:
+                points_by_slice[slice_idx] = []
+            points_by_slice[slice_idx].append(point)
 
         connections_found = 0
 
         # Check connectivity between adjacent slices
-        for slice_idx in sorted(nodes_by_slice.keys())[:-1]:
+        for slice_idx in sorted(points_by_slice.keys())[:-1]:
             next_slice_idx = slice_idx + 1
 
-            if next_slice_idx in nodes_by_slice:
-                current_nodes = nodes_by_slice[slice_idx]
-                next_nodes = nodes_by_slice[next_slice_idx]
+            if next_slice_idx in points_by_slice:
+                current_points = points_by_slice[slice_idx]
+                next_points = points_by_slice[next_slice_idx]
 
-                # Check each pair of nodes from adjacent slices
-                for node1 in current_nodes:
-                    for node2 in next_nodes:
-                        if self._nodes_connected_through_volume(node1, node2, mesh):
-                            # We'll create the actual edge later in _create_cylinder_edges
+                # Check each pair of points from adjacent slices
+                for point1 in current_points:
+                    for point2 in next_points:
+                        if self._points_connected_through_volume(point1, point2, mesh):
+                            # We'll create the actual segment later in _create_cylinder_segments
                             # For now, just mark them as connected in NetworkX graph
-                            if not self.graph.has_edge(node1.id, node2.id):
+                            if not self.graph.has_edge(point1.id, point2.id):
                                 self.graph.add_edge(
-                                    node1.id, node2.id, temp_connection=True
+                                    point1.id, point2.id, temp_connection=True
                                 )
                                 connections_found += 1
-                                print(f"  Connected {node1.id} ↔ {node2.id}")
+                                print(f"  Connected {point1.id} ↔ {point2.id}")
 
-        print(f"✅ Found {connections_found} node connections")
+        print(f"✅ Found {connections_found} point connections")
 
-    def _nodes_connected_through_volume(
-        self, node1: GraphNode, node2: GraphNode, mesh: trimesh.Trimesh
+    def _points_connected_through_volume(
+        self, point1: Point, point2: Point, mesh: trimesh.Trimesh
     ) -> bool:
-        """Determine if two nodes are connected through contiguous volume.
-
-        This uses a combination of geometric and volumetric analysis.
-        """
+        """Determine if two points are connected through contiguous volume."""
         # Basic geometric check: are the cross-sections close enough?
-        center1_2d = node1.center[:2]
-        center2_2d = node2.center[:2]
+        center1_2d = point1.center[:2]
+        center2_2d = point2.center[:2]
         distance_2d = np.linalg.norm(center1_2d - center2_2d)
 
         # If centers are too far apart, they're probably not connected
-        max_distance = (node1.radius + node2.radius) * 2.0  # Generous threshold
+        max_distance = (point1.radius + point2.radius) * 2.0  # Generous threshold
         if distance_2d > max_distance:
             return False
 
         # Volume-based connectivity check
         # Sample points between the two cross-sections and check if they're inside the mesh
-        z1, z2 = node1.z_position, node2.z_position
+        z1, z2 = point1.z_position, point2.z_position
 
         # Create interpolated points along the potential connection
         n_samples = 10
@@ -1432,30 +1337,30 @@ class NodeEdgeSegmenter:
         connectivity_threshold = 0.7  # 70% of samples must be inside
         return (inside_count / n_samples) >= connectivity_threshold
 
-    def _create_cylinder_edges(self):
-        """Create GraphEdge objects for all connected node pairs."""
-        print("Creating cylinder edges with metadata...")
+    def _create_cylinder_segments(self):
+        """Create Segment objects for all connected point pairs."""
+        print("Creating cylinder segments with metadata...")
 
-        edge_count = 0
-        for node1_id, node2_id in self.graph.edges():
-            node1 = self.graph.get_node_by_id(node1_id)
-            node2 = self.graph.get_node_by_id(node2_id)
+        segment_count = 0
+        for point1_id, point2_id in self.graph.edges():
+            point1 = self.graph.get_point_by_id(point1_id)
+            point2 = self.graph.get_point_by_id(point2_id)
 
-            if node1 and node2:
-                # Calculate edge properties
-                center_line = np.array([node1.center, node2.center])
-                length = np.linalg.norm(node2.center - node1.center)
+            if point1 and point2:
+                # Calculate segment properties
+                center_line = np.array([point1.center, point2.center])
+                length = np.linalg.norm(point2.center - point1.center)
 
                 # Approximate cylinder volume (truncated cone)
-                r1, r2 = node1.radius, node2.radius
+                r1, r2 = point1.radius, point2.radius
                 volume = (np.pi * length / 3) * (r1**2 + r1 * r2 + r2**2)
 
-                # Create GraphEdge
-                edge_id = f"edge_{node1_id}_{node2_id}"
-                edge = GraphEdge(
-                    id=edge_id,
-                    node1_id=node1_id,
-                    node2_id=node2_id,
+                # Create Segment
+                segment_id = f"segment_{point1_id}_{point2_id}"
+                segment = Segment(
+                    id=segment_id,
+                    point1_id=point1_id,
+                    point2_id=point2_id,
                     length=length,
                     radius1=r1,
                     radius2=r2,
@@ -1464,631 +1369,10 @@ class NodeEdgeSegmenter:
                 )
 
                 # Add to graph
-                self.graph.add_graph_edge(edge)
-                edge_count += 1
+                self.graph.add_segment(segment)
+                segment_count += 1
 
-        print(f"✅ Created {edge_count} cylinder edges")
-
-
-class MeshSegmenter:
-    """
-    Systematic mesh segmentation using cross-sectional cuts and volumetric connectivity analysis.
-
-    This algorithm segments a 3D mesh into discrete volumetric segments by slicing it at regular
-    intervals and analyzing the resulting cross-sections to build a connectivity graph.
-
-    ALGORITHM OVERVIEW:
-    ==================
-
-    Step 0: Input Validation
-    ------------------------
-    - Validates that input mesh is a single, closed, watertight volume
-    - Checks for disconnected components (not allowed)
-    - Annotates all original mesh faces as "external" for later classification
-
-    Step 1: Cross-Sectional Analysis
-    --------------------------------
-    - Creates horizontal cutting planes at regular intervals (slice_height)
-    - Computes 2D cross-sections using trimesh intersection operations
-    - Each cross-section may contain multiple disconnected polygons (branches)
-    - Stores cross-section geometry, area, and z-position for each slice
-
-    Step 2: Volumetric Segmentation
-    ------------------------------
-    - Slices the mesh between consecutive cross-sections to create 3D segments
-    - Each segment is bounded by two cross-sectional planes (lower and upper)
-    - Segments are created by:
-      * Cutting mesh at slice boundaries
-      * Extracting connected components within each slice interval
-      * Computing volumetric properties (volume, surface areas, centroid)
-    - Face classification:
-      * External faces: Original mesh boundary faces (cylindrical surfaces)
-      * Internal faces: Newly created faces from cross-sectional cuts
-
-    Step 3: Connectivity Graph Construction
-    -------------------------------------
-    - Builds a graph where nodes represent volumetric segments
-    - Edges connect segments that share boundary faces at cross-sectional interfaces
-    - Connection detection algorithm:
-      * For each cross-section plane, identifies all segments with faces at that z-position
-      * Analyzes boundary face overlap in the XY plane using spatial proximity
-      * Creates edges between segments whose boundary faces overlap significantly
-    - Graph properties stored per node:
-      * Segment geometry and mesh
-      * Volume and surface area measurements
-      * Spatial bounds (z_min, z_max)
-      * Slice and segment indices
-
-    Step 4: Conservation Validation
-    ------------------------------
-    - Validates that total volume is conserved (sum of segments ≈ original mesh volume)
-    - Checks for any missing or duplicate volume
-    - Reports conservation errors if detected
-
-    ARCHITECTURAL DESIGN:
-    ====================
-    The algorithm follows a node-edge graph architecture where:
-    - Nodes = Volumetric segments (3D regions between cross-sections)
-    - Edges = Connectivity relationships between adjacent segments
-    - Edge metadata = Shared boundary information and geometric properties
-
-    KEY FEATURES:
-    =============
-    - Handles branching structures (multiple cross-sections per slice)
-    - Maintains topological connectivity through shared boundaries
-    - Preserves volumetric and surface area properties
-    - Supports minimum volume filtering to remove noise segments
-    - Provides both segment list and graph representations
-
-    CONSTRAINTS:
-    ============
-    - Input mesh must be watertight and represent a single connected volume
-    - Cross-sections within the same slice never overlap (enforced)
-    - Nodes in the same slice never connect to each other (by design)
-    - Connectivity only exists between adjacent slices through shared boundaries
-    """
-
-    def __init__(self):
-        self.original_mesh = None
-        self.slice_height = None
-        self.cross_sections: List[CrossSection] = []
-        self.slices: List[Dict] = []  # List of slice boundary info
-        self.segments: List[Segment] = []
-        self.graph = SegmentGraph()
-
-    def segment_mesh(
-        self,
-        mesh: trimesh.Trimesh,
-        slice_height: float,
-        min_volume: float = 1e-6,
-        return_segment_graph: bool = False,
-    ):
-        """
-        Segment mesh into volumetric segments.
-
-        Args:
-            mesh: Input mesh (must be single closed volume)
-            slice_height: Height of each slice
-            min_volume: Minimum segment volume threshold
-            return_segment_graph: If True, returns a SegmentGraph instance instead of segments list
-
-        Returns:
-            List[Segment] or SegmentGraph: List of segments or a SegmentGraph instance if return_segment_graph=True
-        """
-        # Validate slice_height
-        if slice_height <= 0:
-            raise ValueError(f"slice_height must be positive, got {slice_height}")
-
-        self.original_mesh = mesh.copy()
-        self.slice_height = slice_height
-        self.segments = []
-        self.cross_sections = []
-
-        # Step 0: Validate input mesh is single hull
-        self._validate_single_hull_mesh(mesh)
-
-        # Step 1: Compute cross-sectional cuts using trimesh.intersections
-        self._compute_cross_sections(mesh)
-
-        # Step 2: Extract slices and identify segments
-        self._extract_slices_and_segments(mesh, min_volume)
-
-        # Step 3: Build connectivity graph
-        self._build_graph()
-
-        # Step 4: Validate conservation
-        self._validate_conservation()
-
-        # Return SegmentGraph if requested, otherwise return segments list
-        if return_segment_graph:
-            return self.get_segment_graph()
-        else:
-            return self.segments
-
-    def _validate_single_hull_mesh(self, mesh: trimesh.Trimesh):
-        """Step 0: Validate that mesh is a single closed volume."""
-        if not mesh.is_watertight:
-            raise ValueError("Input mesh must be watertight (closed volume)")
-
-        # Check for multiple disconnected components
-        components = mesh.split(only_watertight=False)
-        if len(components) > 1:
-            raise ValueError(
-                f"Input mesh has {len(components)} disconnected components. "
-                "Mesh must be a single connected volume."
-            )
-
-        # Store original bounds for later face classification
-        self.original_bounds = mesh.bounds.copy()
-
-        # Annotate all original faces as "external"
-        if not hasattr(mesh, "face_attributes"):
-            mesh.face_attributes = {}
-        mesh.face_attributes["face_type"] = ["external"] * len(mesh.faces)
-
-        print(
-            f"✅ Validated single-hull mesh: {len(mesh.faces)} external faces, "
-            f"volume={mesh.volume:.3f}"
-        )
-
-    def _compute_cross_sections(self, mesh: trimesh.Trimesh):
-        """Step 1: Compute cross-sectional cuts using trimesh.intersections."""
-        z_min, z_max = mesh.bounds[:, 2]
-
-        # Create cutting planes every slice_height units
-        z_positions = np.arange(z_min + self.slice_height, z_max, self.slice_height)
-
-        print(
-            f"Computing {len(z_positions)} cross-sections from z={z_min:.2f} to z={z_max:.2f}"
-        )
-
-        for i, z_pos in enumerate(z_positions):
-            # Create cutting plane (normal pointing up in z-direction)
-            plane_origin = np.array([0, 0, z_pos])
-            plane_normal = np.array([0, 0, 1])
-
-            try:
-                # Use trimesh.intersections to find intersection lines
-                lines = trimesh.intersections.mesh_plane(
-                    mesh, plane_normal, plane_origin, return_faces=False
-                )
-
-                if lines is not None and len(lines) > 0:
-                    # Create cross-section object
-                    cs = CrossSection(z_position=z_pos, intersection_lines=lines)
-
-                    # Try to create 2D projection for area calculation
-                    try:
-                        section_2d = mesh.section(
-                            plane_origin=plane_origin, plane_normal=plane_normal
-                        )
-                        if section_2d is not None:
-                            cs.intersection_2d = section_2d
-                            if hasattr(section_2d, "area"):
-                                cs.area = section_2d.area
-                    except:
-                        pass  # 2D projection failed, continue with lines only
-
-                    self.cross_sections.append(cs)
-                    print(
-                        f"  Cross-section {i}: z={z_pos:.2f}, {len(lines)} line segments, area={cs.area:.3f}"
-                    )
-                else:
-                    print(f"  Cross-section {i}: z={z_pos:.2f}, no intersection")
-
-            except Exception as e:
-                print(f"  Cross-section {i}: z={z_pos:.2f}, error: {e}")
-
-        # Store slice boundaries based on cross-sections
-        z_all = [z_min] + [cs.z_position for cs in self.cross_sections] + [z_max]
-        self.slices = [
-            {"z_min": z_all[i], "z_max": z_all[i + 1], "index": i}
-            for i in range(len(z_all) - 1)
-        ]
-
-        print(
-            f"✅ Computed {len(self.cross_sections)} cross-sections, creating {len(self.slices)} slices"
-        )
-
-    def _extract_slices_and_segments(self, mesh: trimesh.Trimesh, min_volume: float):
-        """Step 2: Extract slices and identify segments within each."""
-        for slice_info in self.slices:
-            slice_idx = slice_info["index"]
-            z_min = slice_info["z_min"]
-            z_max = slice_info["z_max"]
-
-            print(f"\nProcessing slice {slice_idx}: z=[{z_min:.2f}, {z_max:.2f}]")
-
-            # Extract slice mesh using two cutting planes
-            slice_mesh = self._extract_slice_mesh(mesh, z_min, z_max)
-
-            if slice_mesh is None or slice_mesh.volume < min_volume:
-                print(
-                    f"  Slice {slice_idx}: No valid mesh extracted (volume too small)"
-                )
-                continue
-
-            # Find connected components (closed volumes) within the slice
-            components = slice_mesh.split(only_watertight=False)
-            valid_components = [c for c in components if c.volume >= min_volume]
-
-            if len(valid_components) == 0:
-                raise ValueError(
-                    f"Slice {slice_idx} has zero segments - this is erroneous"
-                )
-
-            print(
-                f"  Slice {slice_idx}: {len(valid_components)} closed volumes (segments)"
-            )
-
-            # Transfer face attributes to each component
-            self._transfer_face_attributes(slice_mesh, valid_components)
-
-            # Create segment objects for each closed volume
-            for seg_idx, component in enumerate(valid_components):
-                segment_id = f"seg_{slice_idx}_{seg_idx}"
-
-                # Analyze face types (external vs internal)
-                ext_area, int_area = self._analyze_face_types(component, z_min, z_max)
-
-                segment = Segment(
-                    id=segment_id,
-                    slice_index=slice_idx,
-                    segment_index=seg_idx,
-                    mesh=component,
-                    volume=component.volume,
-                    external_surface_area=ext_area,
-                    internal_surface_area=int_area,
-                    centroid=component.centroid,
-                    z_min=z_min,
-                    z_max=z_max,
-                )
-
-                self.segments.append(segment)
-                print(
-                    f"    Segment {segment_id}: vol={segment.volume:.3f}, "
-                    f"ext_area={ext_area:.3f}, int_area={int_area:.3f}"
-                )
-
-                # Validate that all segments have both external and internal areas
-                if ext_area <= 0:
-                    warnings.warn(
-                        f"Segment {segment_id} has zero external surface area"
-                    )
-                if int_area <= 0:
-                    # Check if this is a single segment representing the entire mesh
-                    # (no actual slicing occurred, so zero internal surface area is expected)
-                    is_whole_mesh = (
-                        len(self.cross_sections)
-                        == 0  # No cross-sections were created (no cuts made)
-                        and abs(component.volume - self.original_mesh.volume)
-                        / self.original_mesh.volume
-                        < 0.05  # Volume is ~same as original (5% tolerance)
-                    )
-                    if not is_whole_mesh:
-                        warnings.warn(
-                            f"Segment {segment_id} has zero internal surface area"
-                        )
-
-        print(
-            f"✅ Extracted {len(self.segments)} total segments across {len(self.slices)} slices"
-        )
-
-    def _extract_slice_mesh(
-        self, mesh: trimesh.Trimesh, z_min: float, z_max: float
-    ) -> Optional[trimesh.Trimesh]:
-        """Extract mesh slice between two z-planes by cutting and capping."""
-        try:
-            # Start with the original mesh
-            working_mesh = mesh.copy()
-
-            # Cut at the lower plane (z_min) - keep the upper part
-            if z_min > mesh.bounds[0, 2]:  # Only cut if not at the bottom
-                plane_origin = np.array([0, 0, z_min])
-                plane_normal = np.array([0, 0, 1])  # Points up (keep upper part)
-                working_mesh = working_mesh.slice_plane(
-                    plane_origin, plane_normal, cap=True
-                )
-                if working_mesh is None:
-                    return None
-
-            # Cut at the upper plane (z_max) - keep the lower part
-            if z_max < mesh.bounds[1, 2]:  # Only cut if not at the top
-                plane_origin = np.array([0, 0, z_max])
-                plane_normal = np.array([0, 0, -1])  # Points down (keep lower part)
-                working_mesh = working_mesh.slice_plane(
-                    plane_origin, plane_normal, cap=True
-                )
-                if working_mesh is None:
-                    return None
-
-            # Reconstruct face annotations after slicing
-            self._reconstruct_face_annotations(working_mesh, z_min, z_max)
-
-            # Ensure the result is watertight
-            if not working_mesh.is_watertight:
-                # Try to fix holes
-                try:
-                    working_mesh.fill_holes()
-                except:
-                    pass
-
-            # Final check - must have reasonable volume
-            if working_mesh.volume < 1e-9:
-                return None
-
-            return working_mesh
-
-        except Exception as e:
-            print(f"    Error extracting slice: {e}")
-            return None
-
-    def _analyze_face_types(
-        self, segment_mesh: trimesh.Trimesh, z_min: float, z_max: float
-    ) -> Tuple[float, float]:
-        """Analyze face types and compute surface areas using face annotations."""
-        external_area = 0.0
-        internal_area = 0.0
-
-        # Get face areas
-        face_areas = segment_mesh.area_faces
-
-        # Use face annotations to classify faces
-        if (
-            hasattr(segment_mesh, "face_attributes")
-            and "face_type" in segment_mesh.face_attributes
-        ):
-            face_types = segment_mesh.face_attributes["face_type"]
-
-            for i, area in enumerate(face_areas):
-                if i < len(face_types):
-                    if face_types[i] == "external":
-                        external_area += area
-                    elif face_types[i] == "internal":
-                        internal_area += area
-        else:
-            # Fallback to geometric classification if annotations missing
-            print("⚠️ Face annotations missing, using geometric fallback")
-            face_centers = segment_mesh.triangles_center
-            face_normals = segment_mesh.face_normals
-            z_tolerance = self.slice_height * 0.01
-
-            for i, (center, area, normal) in enumerate(
-                zip(face_centers, face_areas, face_normals)
-            ):
-                z_pos = center[2]
-                is_at_lower = abs(z_pos - z_min) < z_tolerance
-                is_at_upper = abs(z_pos - z_max) < z_tolerance
-                is_horizontal = abs(normal[2]) > 0.8
-
-                if (is_at_lower or is_at_upper) and is_horizontal:
-                    internal_area += area
-                else:
-                    external_area += area
-
-        return external_area, internal_area
-
-    def _build_graph(self):
-        """Step 3: Build graph based on shared cross-section boundaries."""
-        # Clear any existing graph data but keep the SegmentGraph instance
-        self.graph.clear()
-
-        # Add all segments as nodes with their properties
-        for segment in self.segments:
-            self.graph.add_node(
-                segment.id,
-                segment=segment,
-                volume=segment.volume,
-                external_surface_area=segment.external_surface_area,
-                internal_surface_area=segment.internal_surface_area,
-                centroid=segment.centroid,
-                z_min=segment.z_min,
-                z_max=segment.z_max,
-                slice_index=segment.slice_index,
-                segment_index=segment.segment_index,
-            )
-
-        connections_found = 0
-
-        # For each cross-section, connect segments that share boundary faces
-        for cross_section_idx in range(len(self.cross_sections)):
-            z_position = self.cross_sections[cross_section_idx].z_position
-
-            # Find all segments that have faces at this cross-section
-            segments_at_cut = []
-            for segment in self.segments:
-                if self._segment_has_faces_at_z(segment, z_position):
-                    segments_at_cut.append(segment)
-
-            # Connect segments that share the same cross-sectional boundary
-            if len(segments_at_cut) > 1:
-                connections = self._find_shared_boundary_connections(
-                    segments_at_cut, z_position
-                )
-                for seg1_id, seg2_id in connections:
-                    if not self.graph.has_edge(seg1_id, seg2_id):
-                        self.graph.add_edge(seg1_id, seg2_id)
-                        connections_found += 1
-                        print(f"  Connected {seg1_id} ↔ {seg2_id}")
-
-        print(
-            f"✅ Built connectivity graph: {len(self.graph.nodes)} nodes, "
-            f"{connections_found} edges"
-        )
-
-        # Update the segments list in the SegmentGraph instance
-        self.graph.segments = self.segments
-        self.graph.segment_dict = {segment.id: segment for segment in self.segments}
-
-    def _segment_has_faces_at_z(self, segment: Segment, z_position: float) -> bool:
-        """Check if a segment has faces at the given z-position."""
-        z_tolerance = self.slice_height * 0.01 if self.slice_height else 0.01
-
-        # Check if any face centers are at the z-position
-        face_centers = segment.mesh.triangles_center
-        for center in face_centers:
-            if abs(center[2] - z_position) < z_tolerance:
-                return True
-        return False
-
-    def _find_shared_boundary_connections(
-        self, segments: List[Segment], z_position: float
-    ) -> List[Tuple[str, str]]:
-        """Find connections between segments that share boundary faces at z_position."""
-        connections = []
-        z_tolerance = self.slice_height * 0.01 if self.slice_height else 0.01
-
-        # Get boundary faces for each segment at this z-position
-        segment_boundary_faces = {}
-        for segment in segments:
-            boundary_faces = []
-            face_centers = segment.mesh.triangles_center
-            triangles = segment.mesh.triangles
-
-            for i, center in enumerate(face_centers):
-                if abs(center[2] - z_position) < z_tolerance:
-                    boundary_faces.append(triangles[i])
-
-            if boundary_faces:
-                segment_boundary_faces[segment.id] = boundary_faces
-
-        # Check for overlapping boundary faces between segment pairs
-        segment_ids = list(segment_boundary_faces.keys())
-        for i in range(len(segment_ids)):
-            for j in range(i + 1, len(segment_ids)):
-                seg1_id = segment_ids[i]
-                seg2_id = segment_ids[j]
-
-                if self._boundary_faces_overlap(
-                    segment_boundary_faces[seg1_id], segment_boundary_faces[seg2_id]
-                ):
-                    connections.append((seg1_id, seg2_id))
-
-        return connections
-
-    def _boundary_faces_overlap(
-        self, faces1: List[np.ndarray], faces2: List[np.ndarray]
-    ) -> bool:
-        """Check if boundary faces from two segments overlap significantly."""
-        if not faces1 or not faces2:
-            return False
-
-        # Use triangle centroids and check for proximity in XY plane
-        tolerance = 0.5  # Spatial tolerance for overlap detection
-
-        for face1 in faces1:
-            centroid1 = np.mean(face1[:, :2], axis=0)  # XY only
-
-            for face2 in faces2:
-                centroid2 = np.mean(face2[:, :2], axis=0)  # XY only
-
-                distance = np.linalg.norm(centroid1 - centroid2)
-                if distance < tolerance:
-                    return True
-
-        return False
-
-    def _segments_share_internal_face(self, seg1: Segment, seg2: Segment) -> bool:
-        """Check if two segments share an internal face."""
-        # They must be in adjacent slices
-        if abs(seg1.slice_index - seg2.slice_index) != 1:
-            return False
-
-        # Get the boundary z-position between the slices
-        if seg1.slice_index < seg2.slice_index:
-            boundary_z = seg1.z_max  # Should equal seg2.z_min
-        else:
-            boundary_z = seg2.z_max  # Should equal seg1.z_min
-
-        # Find faces at the boundary for both segments
-        faces1 = self._get_boundary_faces(seg1, boundary_z)
-        faces2 = self._get_boundary_faces(seg2, boundary_z)
-
-        # Check for geometric overlap
-        return self._faces_overlap(faces1, faces2)
-
-    def _get_boundary_faces(self, segment: Segment, z_pos: float) -> List[np.ndarray]:
-        """Get face triangles at a specific z-boundary."""
-        boundary_faces = []
-        z_tolerance = self.slice_height * 0.01
-
-        face_centers = segment.mesh.triangles_center
-        triangles = segment.mesh.triangles
-
-        for i, center in enumerate(face_centers):
-            if abs(center[2] - z_pos) < z_tolerance:
-                # This face is at the boundary
-                boundary_faces.append(triangles[i])
-
-        return boundary_faces
-
-    def _faces_overlap(
-        self, faces1: List[np.ndarray], faces2: List[np.ndarray]
-    ) -> bool:
-        """Check if faces from two segments overlap in XY plane."""
-        if not faces1 or not faces2:
-            return False
-
-        # Check for overlap using triangle centroids in XY plane
-        for face1 in faces1:
-            centroid1 = np.mean(face1[:, :2], axis=0)  # XY only
-
-            for face2 in faces2:
-                centroid2 = np.mean(face2[:, :2], axis=0)  # XY only
-
-                distance = np.linalg.norm(centroid1 - centroid2)
-                if distance < 0.1:  # Threshold for overlap
-                    return True
-
-        return False
-
-    def _validate_conservation(self):
-        """Step 4: Validate volume and surface area conservation."""
-        # Volume conservation
-        total_segment_volume = sum(seg.volume for seg in self.segments)
-        original_volume = self.original_mesh.volume
-        volume_error = (
-            abs(total_segment_volume - original_volume) / original_volume * 100
-        )
-
-        # Surface area conservation (external faces only)
-        total_external_area = sum(seg.external_surface_area for seg in self.segments)
-        original_area = self.original_mesh.area
-        area_error = abs(total_external_area - original_area) / original_area * 100
-
-        print(f"\n📊 CONSERVATION VALIDATION:")
-        print(
-            f"Volume: segments={total_segment_volume:.4f} vs original={original_volume:.4f} "
-            f"(error: {volume_error:.2f}%)"
-        )
-        print(
-            f"Surface area: segments={total_external_area:.4f} vs original={original_area:.4f} "
-            f"(error: {area_error:.2f}%)"
-        )
-
-        # Check tolerances
-        if volume_error > 5.0:
-            warnings.warn(f"Volume conservation error too high: {volume_error:.2f}%")
-        if area_error > 5.0:
-            warnings.warn(
-                f"Surface area conservation error too high: {area_error:.2f}%"
-            )
-
-        if volume_error <= 5.0 and area_error <= 5.0:
-            print("✅ Conservation validation passed")
-        else:
-            print("❌ Conservation validation failed")
-
-    # Utility methods for analysis
-    def get_segments_in_slice(self, slice_index: int) -> List[Segment]:
-        """Get all segments in a specific slice."""
-        return [seg for seg in self.segments if seg.slice_index == slice_index]
-
-    def get_connected_segments(self, segment_id: str) -> List[str]:
-        """Get segments connected to the given segment."""
-        if self.graph is None:
-            return []
-        return list(self.graph.get_connected_segments(segment_id))
+        print(f"✅ Created {segment_count} cylinder segments")
 
     def get_connected_components(self) -> List[List[str]]:
         """Get connected components in the graph."""
