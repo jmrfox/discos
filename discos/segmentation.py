@@ -189,7 +189,7 @@ class CrossSection:
 
 @dataclass
 class Point:
-    """Represents a spatial point (center of cross-section) in the new graph architecture."""
+    """Represents a spatial point (center of cross-section), which is a node in the graph."""
 
     id: str
     z_position: float
@@ -202,7 +202,7 @@ class Point:
 
 @dataclass
 class Segment:
-    """Represents a cylindrical segment connecting two points."""
+    """Represents a cylindrical segment connecting two points (two nodes in the graph)."""
 
     id: str
     point1_id: str
@@ -213,6 +213,7 @@ class Segment:
     center_line: np.ndarray  # 3D line from point1 to point2
     volume: float  # Approximate cylinder volume
     surface_area: float  # Approximate cylinder surface area
+
 
 @dataclass
 class SWCData:
@@ -308,14 +309,13 @@ class SWCData:
         return summary
 
 
-
 class SegmentGraph(nx.Graph):
     """
     Graph representation of segmented mesh using graph-based architecture.
 
     This class wraps a NetworkX graph to represent the connectivity
     between segments in a compartmental model using the graph-based approach:
-    
+
     - Nodes represent spatial points (Point objects at cross-section centers)
     - Edges represent cylindrical segments (Segment objects) connecting those points
 
@@ -518,7 +518,6 @@ class SegmentGraph(nx.Graph):
             scale_factor=scale_factor,
         )
 
-
     def _break_cycles_and_create_tree(
         self, root_node: str, strategy: str = "minimum_spanning_tree"
     ) -> tuple:
@@ -639,14 +638,15 @@ class SegmentGraph(nx.Graph):
 
         return node_to_sample_id
 
-
     def _break_cycles_for_swc(self, root_point_id: str) -> Tuple[set, set]:
         """Break cycles using minimum spanning tree for graph-based architecture."""
         # Create weighted graph based on segment lengths
         weighted_graph = self.copy()
         for segment in self.segments_list:
             if weighted_graph.has_edge(segment.point1_id, segment.point2_id):
-                weighted_graph[segment.point1_id][segment.point2_id]["weight"] = segment.length
+                weighted_graph[segment.point1_id][segment.point2_id][
+                    "weight"
+                ] = segment.length
 
         # Create minimum spanning tree
         mst = nx.minimum_spanning_tree(weighted_graph)
@@ -981,8 +981,6 @@ class SegmentGraph(nx.Graph):
             return None
 
 
-
-
 class MeshSegmenter:
     """
     Mesh segmentation using graph-based approach.
@@ -1041,7 +1039,7 @@ class MeshSegmenter:
         self.slice_height = slice_height
         self.radius_method = radius_method
         self.circle_fitting_method = circle_fitting_method
-        
+
         return self._segment_mesh(mesh, slice_height, min_area)
 
     def _segment_mesh(
@@ -1074,7 +1072,6 @@ class MeshSegmenter:
         )
         return self.graph
 
-
     def _validate_single_hull_mesh(self, mesh: trimesh.Trimesh):
         """Step 0: Validate that mesh is a single closed volume."""
         if not mesh.is_watertight:
@@ -1101,9 +1098,10 @@ class MeshSegmenter:
             f"volume={mesh.volume:.3f}"
         )
 
-
     # Helper methods
-    def _compute_cross_sections_and_points(self, mesh: trimesh.Trimesh, min_area: float):
+    def _compute_cross_sections_and_points(
+        self, mesh: trimesh.Trimesh, min_area: float
+    ):
         """Compute cross-sections and create points at their centers."""
         z_min, z_max = mesh.bounds[:, 2]
         z_positions = np.arange(z_min + self.slice_height, z_max, self.slice_height)
