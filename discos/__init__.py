@@ -13,11 +13,11 @@ __email__ = "jordanmrfox@gmail.com"
 # Mesh functions (primary 3D representation)
 from .mesh import MeshManager
 
-# Segmentation functions
-from .segmentation import MeshSegmenter, Segment, SegmentGraph, Point
+# Skeletonization functions
+
 
 # Demo mesh functions from demos module
-from .demos import (
+from .demo import (
     create_cylinder_mesh,
     create_torus_mesh,
     create_branching_mesh,
@@ -27,15 +27,11 @@ from .demos import (
 
 
 # Utility functions
-from .utils import data_path
+from .path import data_path
 
 __all__ = [
     # Mesh processing (primary 3D representation)
     "MeshManager",
-    "MeshSegmenter",
-    "Segment",
-    "SegmentGraph",
-    "Point",
     # Demo mesh functions
     "create_cylinder_mesh",
     "create_torus_mesh",
