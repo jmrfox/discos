@@ -2,9 +2,11 @@
 Main mesh class
 """
 
+from typing import Any, Dict, Optional, Tuple, Union
+
 import numpy as np
 import trimesh
-from typing import Optional, Tuple, Dict, Any, Union
+
 
 class MeshManager:
     """
@@ -16,7 +18,7 @@ class MeshManager:
         self.mesh = mesh
         self.original_mesh = mesh
         self.bounds = self._compute_bounds()
-        
+
         # Attributes
         self.verbose = verbose
         self.stats = {
@@ -31,14 +33,22 @@ class MeshManager:
     def log(self, message: str, level: str = "INFO"):
         """Log messages if verbose mode is enabled."""
         if self.verbose:
-            prefix = {"INFO": "ℹ️", "SUCCESS": "✅", "WARNING": "⚠️", "ERROR": "❌", "PROCESSING": "🔧"}.get(level, "📝")
+            prefix = {
+                "INFO": "ℹ️",
+                "SUCCESS": "✅",
+                "WARNING": "⚠️",
+                "ERROR": "❌",
+                "PROCESSING": "🔧",
+            }.get(level, "📝")
             print(f"{prefix} {message}")
 
     # =================================================================
     # MESH LOADING AND BASIC OPERATIONS
     # =================================================================
 
-    def load_mesh(self, filepath: str, file_format: Optional[str] = None) -> trimesh.Trimesh:
+    def load_mesh(
+        self, filepath: str, file_format: Optional[str] = None
+    ) -> trimesh.Trimesh:
         """
         Load a mesh from file.
 
@@ -72,14 +82,15 @@ class MeshManager:
             self.bounds = self._compute_bounds()
 
             if self.verbose:
-                print(f"Loaded mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+                print(
+                    f"Loaded mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces"
+                )
                 print(f"Bounds: {self.bounds}")
 
             return mesh
 
         except Exception as e:
             raise ValueError(f"Failed to load mesh from {filepath}: {str(e)}")
-
 
     def copy(self):
         return MeshManager(self.mesh.copy(), verbose=self.verbose)
@@ -152,7 +163,9 @@ class MeshManager:
 
         return self.mesh
 
-    def align_with_z_axis(self, target_axis: Optional[np.ndarray] = None) -> trimesh.Trimesh:
+    def align_with_z_axis(
+        self, target_axis: Optional[np.ndarray] = None
+    ) -> trimesh.Trimesh:
         """
         Align the mesh's principal axis with the z-axis.
 
@@ -177,15 +190,21 @@ class MeshManager:
         principal_axis = eigenvectors[:, np.argmax(eigenvalues)]
 
         # Compute rotation to align principal axis with target
-        rotation_matrix = self._rotation_matrix_between_vectors(principal_axis, target_axis)
+        rotation_matrix = self._rotation_matrix_between_vectors(
+            principal_axis, target_axis
+        )
 
         # Apply rotation
-        self.mesh.vertices = (rotation_matrix @ vertices_centered.T).T + self.mesh.centroid
+        self.mesh.vertices = (
+            rotation_matrix @ vertices_centered.T
+        ).T + self.mesh.centroid
         self.bounds = self._compute_bounds()
-        
+
         return self.mesh
 
-    def _rotation_matrix_between_vectors(self, vec1: np.ndarray, vec2: np.ndarray) -> np.ndarray:
+    def _rotation_matrix_between_vectors(
+        self, vec1: np.ndarray, vec2: np.ndarray
+    ) -> np.ndarray:
         """Compute rotation matrix to rotate vec1 to vec2."""
         # Normalize vectors
         vec1 = vec1 / np.linalg.norm(vec1)
@@ -210,12 +229,12 @@ class MeshManager:
 
     def _rodrigues_rotation(self, axis: np.ndarray, angle: float) -> np.ndarray:
         """Rodrigues' rotation formula."""
-        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        K = np.array(
+            [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+        )
         return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
 
-
-
-# combining the functions from utils into this class
+    # combining the functions from utils into this class
 
     def analyze_mesh(self) -> dict:
         """
@@ -225,7 +244,7 @@ class MeshManager:
         Returns:
             Dictionary of mesh properties including volume, watertightness, winding consistency,
             face count, vertex count, bounds, and potential issues.
-        """    
+        """
 
         mesh = self.to_trimesh()
         # Initialize results dictionary
@@ -237,16 +256,18 @@ class MeshManager:
             "is_winding_consistent": mesh.is_winding_consistent,
             "issues": [],
         }
-        
+
         # Calculate volume (report actual value, even if negative)
         try:
             results["volume"] = mesh.volume
             if mesh.volume < 0:
-                results["issues"].append("Negative volume detected - face normals may be inverted")
+                results["issues"].append(
+                    "Negative volume detected - face normals may be inverted"
+                )
         except Exception as e:
             results["volume"] = None
             results["issues"].append(f"Volume calculation failed: {str(e)}")
-        
+
         # Check for non-manifold edges
         try:
             if hasattr(mesh, "is_manifold"):
@@ -263,18 +284,22 @@ class MeshManager:
             # For a torus: euler_number = 0
             # For a double torus: euler_number = -2
             # Genus = (2 - euler_number) / 2
-            
+
             results["euler_characteristic"] = mesh.euler_number
-            
+
             # Only calculate genus for closed (watertight) meshes
             if mesh.is_watertight:
                 # For a closed orientable surface: genus = (2 - euler_number) / 2
                 results["genus"] = int((2 - mesh.euler_number) / 2)
-                
+
                 # Sanity check - genus should be non-negative for simple shapes
                 if results["genus"] < 0:
-                    results["genus"] = 0  # Default to 0 for simple shapes like spheres, cylinders
-                    results["issues"].append("Calculated negative genus, defaulting to 0")
+                    results["genus"] = (
+                        0  # Default to 0 for simple shapes like spheres, cylinders
+                    )
+                    results["issues"].append(
+                        "Calculated negative genus, defaulting to 0"
+                    )
             else:
                 # For non-watertight meshes, genus is not well-defined
                 results["genus"] = None
@@ -283,7 +308,6 @@ class MeshManager:
             results["genus"] = None
             results["euler_characteristic"] = None
             results["issues"].append(f"Topology calculation failed: {str(e)}")
-
 
         # Analyze face normals
         try:
@@ -294,7 +318,7 @@ class MeshManager:
                     "std": mesh.face_normals.std(axis=0).tolist(),
                     "sum": mesh.face_normals.sum(axis=0).tolist(),
                 }
-                
+
                 # Check if normals are predominantly pointing inward (negative volume)
                 if results.get("volume", 0) < 0:
                     results["normal_direction"] = "inward"
@@ -303,106 +327,115 @@ class MeshManager:
         except Exception as e:
             results["normal_stats"] = None
             results["issues"].append(f"Normal analysis failed: {str(e)}")
-        
+
         # Check for duplicate vertices and faces
         try:
             unique_verts = np.unique(mesh.vertices, axis=0)
             results["duplicate_vertices"] = len(mesh.vertices) - len(unique_verts)
             if results["duplicate_vertices"] > 0:
-                results["issues"].append(f"Found {results['duplicate_vertices']} duplicate vertices")
+                results["issues"].append(
+                    f"Found {results['duplicate_vertices']} duplicate vertices"
+                )
         except Exception:
             results["duplicate_vertices"] = None
-        
+
         # Check for degenerate faces (zero area)
         try:
             if hasattr(mesh, "area_faces"):
                 degenerate_count = np.sum(mesh.area_faces < 1e-8)
                 results["degenerate_faces"] = int(degenerate_count)
                 if degenerate_count > 0:
-                    results["issues"].append(f"Found {degenerate_count} degenerate faces")
+                    results["issues"].append(
+                        f"Found {degenerate_count} degenerate faces"
+                    )
         except Exception:
             results["degenerate_faces"] = None
-        
+
         # Check for connected components
         try:
             components = mesh.split(only_watertight=False)
             results["component_count"] = len(components)
             if len(components) > 1:
-                results["issues"].append(f"Mesh has {len(components)} disconnected components")
+                results["issues"].append(
+                    f"Mesh has {len(components)} disconnected components"
+                )
         except Exception:
             results["component_count"] = None
-        
-        return results
 
+        return results
 
     def print_mesh_analysis(self, verbose: bool = False) -> None:
         """
         Analyze a mesh and print a formatted report of its properties.
-        
+
         Args:
             verbose: Whether to print detailed information
         """
         analysis = self.analyze_mesh()
-        
+
         print("Mesh Analysis Report")
         print("====================")
-        
+
         # Basic properties
         print(f"\nGeometry:")
         print(f"  * Vertices: {analysis['vertex_count']}")
         print(f"  * Faces: {analysis['face_count']}")
-        if analysis.get('component_count') is not None:
+        if analysis.get("component_count") is not None:
             print(f"  * Components: {analysis['component_count']}")
-        if analysis.get('volume') is not None:
+        if analysis.get("volume") is not None:
             print(f"  * Volume: {analysis['volume']:.2f}")
-        if analysis.get('bounds') is not None:
-            min_bound, max_bound = analysis['bounds']
-            print(f"  * Bounds: [{min_bound[0]:.1f}, {min_bound[1]:.1f}, {min_bound[2]:.1f}] to [{max_bound[0]:.1f}, {max_bound[1]:.1f}, {max_bound[2]:.1f}]")
-        
+        if analysis.get("bounds") is not None:
+            min_bound, max_bound = analysis["bounds"]
+            print(
+                f"  * Bounds: [{min_bound[0]:.1f}, {min_bound[1]:.1f}, {min_bound[2]:.1f}] to [{max_bound[0]:.1f}, {max_bound[1]:.1f}, {max_bound[2]:.1f}]"
+            )
+
         # Mesh quality
         print(f"\nMesh Quality:")
         print(f"  * Watertight: {analysis['is_watertight']}")
         print(f"  * Winding Consistent: {analysis['is_winding_consistent']}")
-        if analysis.get('is_manifold') is not None:
+        if analysis.get("is_manifold") is not None:
             print(f"  * Manifold: {analysis['is_manifold']}")
-        if analysis.get('normal_direction') is not None:
+        if analysis.get("normal_direction") is not None:
             print(f"  * Normal Direction: {analysis['normal_direction']}")
-        if analysis.get('duplicate_vertices') is not None:
+        if analysis.get("duplicate_vertices") is not None:
             print(f"  * Duplicate Vertices: {analysis['duplicate_vertices']}")
-        if analysis.get('degenerate_faces') is not None:
+        if analysis.get("degenerate_faces") is not None:
             print(f"  * Degenerate Faces: {analysis['degenerate_faces']}")
-        
+
         # Topology
-        if analysis.get('genus') is not None or analysis.get('euler_characteristic') is not None:
+        if (
+            analysis.get("genus") is not None
+            or analysis.get("euler_characteristic") is not None
+        ):
             print(f"\nTopology:")
-            if analysis.get('genus') is not None:
+            if analysis.get("genus") is not None:
                 print(f"  * Genus: {analysis['genus']}")
-            if analysis.get('euler_characteristic') is not None:
+            if analysis.get("euler_characteristic") is not None:
                 print(f"  * Euler Characteristic: {analysis['euler_characteristic']}")
-        
+
         # Issues
-        if analysis['issues']:
+        if analysis["issues"]:
             print(f"\nIssues Detected ({len(analysis['issues'])}):")
-            for i, issue in enumerate(analysis['issues']):
+            for i, issue in enumerate(analysis["issues"]):
                 print(f"  {i+1}. {issue}")
         else:
             print(f"\nNo issues detected")
-        
+
         # Detailed stats
-        if verbose and analysis.get('normal_stats') is not None:
+        if verbose and analysis.get("normal_stats") is not None:
             print(f"\nNormal Statistics:")
-            mean = analysis['normal_stats']['mean']
-            sum_val = analysis['normal_stats']['sum']
+            mean = analysis["normal_stats"]["mean"]
+            sum_val = analysis["normal_stats"]["sum"]
             print(f"  * Mean: [{mean[0]:.4f}, {mean[1]:.4f}, {mean[2]:.4f}]")
             print(f"  * Sum: [{sum_val[0]:.4f}, {sum_val[1]:.4f}, {sum_val[2]:.4f}]")
-        
+
         print("\nRecommendation:")
-        if analysis['issues']:
+        if analysis["issues"]:
             print("  Consider using repair_mesh() to fix the detected issues.")
         else:
             print("  Mesh appears to be in good condition.")
         print("====================")
-
 
     def repair_mesh(
         self,
@@ -430,11 +463,11 @@ class MeshManager:
         Returns:
             Repaired mesh (new copy, original is not modified)
         """
-        
+
         mesh = self.to_trimesh()
 
         repair_log = []
-        
+
         # Fix negative volume by inverting faces if needed
         if fix_negative_volume:
             try:
@@ -442,7 +475,9 @@ class MeshManager:
                 if hasattr(mesh, "volume") and mesh.volume < 0:
                     initial_volume = mesh.volume
                     mesh.invert()
-                    repair_log.append(f"Inverted faces to fix negative volume: {initial_volume:.2f} → {mesh.volume:.2f}")
+                    repair_log.append(
+                        f"Inverted faces to fix negative volume: {initial_volume:.2f} → {mesh.volume:.2f}"
+                    )
             except Exception as e:
                 repair_log.append(f"Failed to fix negative volume: {e}")
 
@@ -475,7 +510,9 @@ class MeshManager:
                     if mesh.is_winding_consistent:
                         repair_log.append("Fixed face normal winding consistency")
                     else:
-                        repair_log.append("Attempted to fix normals but still inconsistent")
+                        repair_log.append(
+                            "Attempted to fix normals but still inconsistent"
+                        )
             except Exception as e:
                 repair_log.append(f"Failed to fix normals: {e}")
 
@@ -486,27 +523,36 @@ class MeshManager:
                     initial_watertight = mesh.is_watertight
                     mesh.fill_holes()
                     if mesh.is_watertight and not initial_watertight:
-                        repair_log.append("Successfully filled holes - mesh is now watertight")
+                        repair_log.append(
+                            "Successfully filled holes - mesh is now watertight"
+                        )
                     elif mesh.is_watertight:
                         repair_log.append("Mesh was already watertight")
                     else:
-                        repair_log.append("Attempted to fill holes but mesh still not watertight")
+                        repair_log.append(
+                            "Attempted to fill holes but mesh still not watertight"
+                        )
             except Exception as e:
                 repair_log.append(f"Failed to fill holes: {e}")
-        
+
         # Keep only the largest component if requested
         if keep_largest_component:
             try:
                 components = mesh.split(only_watertight=False)
                 if len(components) > 1:
                     # Keep the largest component by volume or face count
-                    volumes = [abs(c.volume) if hasattr(c, "volume") else len(c.faces) for c in components]
+                    volumes = [
+                        abs(c.volume) if hasattr(c, "volume") else len(c.faces)
+                        for c in components
+                    ]
                     largest_idx = np.argmax(volumes)
                     mesh = components[largest_idx]
-                    repair_log.append(f"Kept largest of {len(components)} components (volume: {volumes[largest_idx]:.2f})")
+                    repair_log.append(
+                        f"Kept largest of {len(components)} components (volume: {volumes[largest_idx]:.2f})"
+                    )
             except Exception as e:
                 repair_log.append(f"Failed to isolate largest component: {e}")
-        
+
         # Final processing to ensure consistency
         try:
             mesh.process(validate=True)
@@ -525,10 +571,12 @@ class MeshManager:
                 print("🔧 Mesh Repair Summary:")
                 for log_entry in repair_log:
                     print(f"  • {log_entry}")
-                
+
                 # Print final mesh status
                 print("\n📊 Final Mesh Status:")
-                print(f"  • Volume: {mesh.volume if hasattr(mesh, 'volume') else 'N/A'}")
+                print(
+                    f"  • Volume: {mesh.volume if hasattr(mesh, 'volume') else 'N/A'}"
+                )
                 print(f"  • Watertight: {mesh.is_watertight}")
                 print(f"  • Winding consistent: {mesh.is_winding_consistent}")
                 print(f"  • Faces: {len(mesh.faces)}")
@@ -538,7 +586,6 @@ class MeshManager:
 
         self.mesh = mesh
         return mesh
-
 
     def visualize_mesh_3d(
         self,
@@ -578,10 +625,11 @@ class MeshManager:
         if backend == "plotly":
             return self._visualize_mesh_plotly(title, color, show_axes, show_wireframe)
         elif backend == "matplotlib":
-            return self._visualize_mesh_matplotlib(title, color, show_axes, show_wireframe)
+            return self._visualize_mesh_matplotlib(
+                title, color, show_axes, show_wireframe
+            )
         else:
             raise ValueError(f"Unknown backend: {backend}")
-
 
     def _visualize_mesh_plotly(self, title, color, show_axes, show_wireframe):
         """Plotly-based mesh visualization."""
@@ -659,7 +707,6 @@ class MeshManager:
             print(f"Plotly visualization failed: {e}")
             return None
 
-
     def _visualize_mesh_matplotlib(self, title, color, show_axes, show_wireframe):
         """Matplotlib-based mesh visualization."""
         try:
@@ -674,7 +721,10 @@ class MeshManager:
 
             # Create mesh surface
             poly3d = Poly3DCollection(
-                vertices[faces], alpha=0.7, facecolor=color, edgecolor="black" if show_wireframe else None
+                vertices[faces],
+                alpha=0.7,
+                facecolor=color,
+                edgecolor="black" if show_wireframe else None,
             )
             ax.add_collection3d(poly3d)
 
@@ -700,7 +750,6 @@ class MeshManager:
             print(f"Matplotlib visualization failed: {e}")
             return None
 
-
     def visualize_mesh_slice_interactive(
         self,
         title: str = "Interactive Mesh Slice",
@@ -712,12 +761,12 @@ class MeshManager:
     ) -> Optional[object]:
         """
         Create an interactive 3D visualization of a mesh with a controllable slice plane.
-        
+
         This function displays a 3D mesh and calculates the intersection of the mesh
         with an xy-plane at a user-controlled z-value. The intersection is shown as a
         colored line on the mesh. A slider allows the user to interactively change the
         z-value of the intersection plane.
-        
+
         Args:
             title: Plot title
             z_range: Tuple of (min_z, max_z) for slice range. Auto-detected if None.
@@ -725,7 +774,7 @@ class MeshManager:
             slice_color: Color for the intersection line
             mesh_color: Color for the 3D mesh
             mesh_opacity: Opacity of the 3D mesh (0-1)
-        
+
         Returns:
             Plotly figure with interactive slider for controlling the z-value
         """
@@ -734,9 +783,9 @@ class MeshManager:
         except ImportError:
             print("Plotly is required for interactive visualization")
             return None
-            
+
         mesh = self.mesh
-        
+
         # Determine z-range if not provided
         if z_range is None:
             z_min, z_max = mesh.vertices[:, 2].min(), mesh.vertices[:, 2].max()
@@ -746,161 +795,195 @@ class MeshManager:
             z_max += padding
         else:
             z_min, z_max = z_range
-        
+
         # Create the base figure with the mesh
         fig = go.Figure()
-        
+
         # Add the mesh to the figure
-        fig.add_trace(go.Mesh3d(
-            x=mesh.vertices[:, 0],
-            y=mesh.vertices[:, 1],
-            z=mesh.vertices[:, 2],
-            i=mesh.faces[:, 0],
-            j=mesh.faces[:, 1],
-            k=mesh.faces[:, 2],
-            opacity=mesh_opacity,
-            color=mesh_color,
-            name="Mesh"
-        ))
-        
+        fig.add_trace(
+            go.Mesh3d(
+                x=mesh.vertices[:, 0],
+                y=mesh.vertices[:, 1],
+                z=mesh.vertices[:, 2],
+                i=mesh.faces[:, 0],
+                j=mesh.faces[:, 1],
+                k=mesh.faces[:, 2],
+                opacity=mesh_opacity,
+                color=mesh_color,
+                name="Mesh",
+            )
+        )
+
         # Function to create a slice at a given z-value
         def create_slice_trace(z_value):
             # Calculate intersection with plane at z_value
             section = mesh.section(plane_origin=[0, 0, z_value], plane_normal=[0, 0, 1])
-            
+
             # If no intersection, return None
-            if section is None or not hasattr(section, 'entities') or len(section.entities) == 0:
+            if (
+                section is None
+                or not hasattr(section, "entities")
+                or len(section.entities) == 0
+            ):
                 return None
-                
+
             # Process all entities in the section to get 3D coordinates
             all_points = []
-            
+
             for entity in section.entities:
-                if hasattr(entity, 'points') and len(entity.points) > 0:
+                if hasattr(entity, "points") and len(entity.points) > 0:
                     # Get the actual 2D coordinates
                     points_2d = section.vertices[entity.points]
-                    
+
                     # Convert to 3D by adding z_value
-                    points_3d = np.column_stack([points_2d, np.full(len(points_2d), z_value)])
-                    
+                    points_3d = np.column_stack(
+                        [points_2d, np.full(len(points_2d), z_value)]
+                    )
+
                     # Add closing point if needed (to complete the loop)
-                    if len(points_2d) > 2 and not np.array_equal(points_2d[0], points_2d[-1]):
-                        closing_point = np.array([points_2d[0][0], points_2d[0][1], z_value])
+                    if len(points_2d) > 2 and not np.array_equal(
+                        points_2d[0], points_2d[-1]
+                    ):
+                        closing_point = np.array(
+                            [points_2d[0][0], points_2d[0][1], z_value]
+                        )
                         points_3d = np.vstack([points_3d, closing_point])
-                    
+
                     # Add to all points list
                     all_points.extend(points_3d.tolist())
-                    
+
                     # Add None to create a break between separate entities
                     all_points.append([None, None, None])
-            
+
             # If we have points, create a scatter trace
             if all_points:
                 x_coords = [p[0] if p is not None else None for p in all_points]
                 y_coords = [p[1] if p is not None else None for p in all_points]
                 z_coords = [p[2] if p is not None else None for p in all_points]
-                
+
                 return go.Scatter3d(
                     x=x_coords,
                     y=y_coords,
                     z=z_coords,
-                    mode='lines',
+                    mode="lines",
                     line=dict(color=slice_color, width=5),
-                    name=f'Slice at z={z_value:.2f}'
+                    name=f"Slice at z={z_value:.2f}",
                 )
-            
+
             return None
-        
+
         # Create initial slice
         initial_z = (z_min + z_max) / 2
         initial_slice = create_slice_trace(initial_z)
-        
+
         # Add initial slice to figure if it exists
         if initial_slice:
             fig.add_trace(initial_slice)
-        
+
         # Create frames for animation
         frames = []
         for i, z_val in enumerate(np.linspace(z_min, z_max, num_slices)):
             # Create a slice at this z-value
             slice_trace = create_slice_trace(z_val)
-            
+
             # If we have a valid slice, add it to frames
             if slice_trace:
                 frame_data = [fig.data[0], slice_trace]  # Mesh and slice
             else:
                 frame_data = [fig.data[0]]  # Just the mesh
-                
-            frames.append(go.Frame(
-                data=frame_data,
-                name=f"frame_{i}",
-                traces=[0, 1]  # Update both traces
-            ))
-        
+
+            frames.append(
+                go.Frame(
+                    data=frame_data,
+                    name=f"frame_{i}",
+                    traces=[0, 1],  # Update both traces
+                )
+            )
+
         # Create slider steps
         steps = []
         for i, z_val in enumerate(np.linspace(z_min, z_max, num_slices)):
             step = dict(
                 args=[
                     [f"frame_{i}"],
-                    {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}
+                    {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"},
                 ],
                 label=f"{z_val:.2f}",
-                method="animate"
+                method="animate",
             )
             steps.append(step)
-        
+
         # Configure the slider
-        sliders = [dict(
-            active=num_slices // 2,  # Start in the middle
-            currentvalue={"prefix": "Z-value: ", "visible": True, "xanchor": "right"},
-            pad={"t": 50, "b": 10},
-            len=0.9,
-            x=0.1,
-            y=0,
-            steps=steps
-        )]
-        
+        sliders = [
+            dict(
+                active=num_slices // 2,  # Start in the middle
+                currentvalue={
+                    "prefix": "Z-value: ",
+                    "visible": True,
+                    "xanchor": "right",
+                },
+                pad={"t": 50, "b": 10},
+                len=0.9,
+                x=0.1,
+                y=0,
+                steps=steps,
+            )
+        ]
+
         # Configure the figure layout
         fig.update_layout(
             title=title,
-            scene=dict(
-                aspectmode='data',
-                camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
-            ),
+            scene=dict(aspectmode="data", camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))),
             height=800,  # Taller to make room for slider
             margin=dict(l=50, r=50, b=100, t=100),  # Add margin at bottom for slider
             sliders=sliders,
             # Add animation controls
-            updatemenus=[dict(
-                type="buttons",
-                showactive=False,
-                y=0,
-                x=0,
-                xanchor="left",
-                yanchor="top",
-                pad=dict(t=60, r=10),
-                buttons=[dict(
-                    label="Play",
-                    method="animate",
-                    args=[None, {"frame": {"duration": 200, "redraw": True}, "fromcurrent": True}]
-                ), dict(
-                    label="Pause",
-                    method="animate",
-                    args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}]
-                ), dict(
-                    label="Reset View",
-                    method="relayout",
-                    args=[{"scene.camera.eye": dict(x=1.5, y=1.5, z=1.5)}]
-                )]
-            )]
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    y=0,
+                    x=0,
+                    xanchor="left",
+                    yanchor="top",
+                    pad=dict(t=60, r=10),
+                    buttons=[
+                        dict(
+                            label="Play",
+                            method="animate",
+                            args=[
+                                None,
+                                {
+                                    "frame": {"duration": 200, "redraw": True},
+                                    "fromcurrent": True,
+                                },
+                            ],
+                        ),
+                        dict(
+                            label="Pause",
+                            method="animate",
+                            args=[
+                                [None],
+                                {
+                                    "frame": {"duration": 0, "redraw": False},
+                                    "mode": "immediate",
+                                },
+                            ],
+                        ),
+                        dict(
+                            label="Reset View",
+                            method="relayout",
+                            args=[{"scene.camera.eye": dict(x=1.5, y=1.5, z=1.5)}],
+                        ),
+                    ],
+                )
+            ],
         )
-        
+
         # Set frames
         fig.frames = frames
-        
-        return fig
 
+        return fig
 
     def visualize_mesh_slice_grid(
         self,
@@ -924,9 +1007,10 @@ class MeshManager:
             Plotly figure with subplot grid
         """
         try:
+            import math
+
             import plotly.graph_objects as go
             from plotly.subplots import make_subplots
-            import math
         except ImportError:
             print("Plotly not available for slice grid visualization")
             return None
@@ -963,9 +1047,15 @@ class MeshManager:
 
             try:
                 # Get 2D cross-section
-                slice_2d = mesh.section(plane_origin=[0, 0, z_level], plane_normal=[0, 0, 1])
+                slice_2d = mesh.section(
+                    plane_origin=[0, 0, z_level], plane_normal=[0, 0, 1]
+                )
 
-                if slice_2d is not None and hasattr(slice_2d, "entities") and len(slice_2d.entities) > 0:
+                if (
+                    slice_2d is not None
+                    and hasattr(slice_2d, "entities")
+                    and len(slice_2d.entities) > 0
+                ):
                     # Plot each entity in the slice
                     for entity in slice_2d.entities:
                         if hasattr(entity, "points"):

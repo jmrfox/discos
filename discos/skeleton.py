@@ -10,7 +10,7 @@ Important terminology:
     For use in DISCOS, the original mesh should be a single watertight volume with no self-intersections.
 - "Bounding planes": The two planes of constant z-value that bound the original mesh: one at the minimum z-value and one at the maximum z-value.
 - "Cut": A plane of constant z-value that intersects the mesh. A single cut always has at least one cross-section associated with it.
-- "Slice": A 3D partition of the mesh with its volume either between two cuts, or between one cut and a bounding plane.
+- "Slice": A 3D partition of the mesh with its volume either between two neighboring cuts, or between a cut and a bounding plane.
     A single slice might contain multiple closed volumes.
 - "Segment": A *contiguous* 3D volume of the mesh with its volume between two cuts. Each segment has a single
     contiguous external surface and at least one contiguous internal surface.
@@ -20,21 +20,21 @@ Important terminology:
     (Several algorithms exist for fitting the disk, e.g. least squares, least absolute deviations, etc.)
 - "Internal surface area": The surface area of a segment that overlaps a cross-section.
 - "External surface area": The surface area of a segment that is shared with the original mesh.
-- "Skeleton": A graph representation where segments are edges and nodes are cross sections (shared by two segments in neighboring slices)
-    which share a cross section. No two nodes at the same cut (z-value) may be connected by an edge.
+- "Skeleton": A graph representation where segments are edges and nodes are cross-sections located on cuts or bounding planes.
+    Edges only connect nodes on adjacent cuts (bounding the same 3D slice). No two nodes at the same cut (z-value) may be connected by an edge.
 
 The algorithm follows these steps:
 
 1. Validate input mesh: Check if mesh is watertight, has no self-intersections, and is a single hull.
     If not, raise an error. Mesh can be passed as a trimesh object or as an instance of discos.mesh.MeshManager.
 
-2. Create bounding planes and cuts along z-axis using trimesh functionality. The cuts are spaced at regular intervals along the z-axis. The algorithm takes a parameter n_slices which is how many slices should be created. This is one greater than the number of cuts.
+2. Create bounding planes and cuts along z-axis using trimesh functionality. The cuts are spaced at regular intervals along the z-axis. The algorithm takes a parameter n_slices which is how many 3D slices (partitions) should be created; equivalently, cuts = n_slices - 1. Nodes exist on the bounding planes and on each cut (total planes = n_slices + 1).
     Where a cut intersects the mesh, create new vertices and faces to represent the 2D cross-section. Fit a disk to the cross-section (by least squares or some other algorithm) and store the radius and center position.
     Create nodes where each bounding plane intersects the mesh, making one node at the minimum z-value and one node at the maximum z-value.
 
 3. Identify segments within each slice. Segments are identified as the contiguous volume components of the mesh within each slice. Keeping track of surface areas and volumes is secondary. What's most important is that the overall connectivity stucture of the volume is preserved, which is handled next.
 
-4. Build the Skeleton graph based on shared cross sections. First, place a node at each cross section. Then, connect two nodes with an edge if there is a path of contiguous volume between the two points *and* the two points are strictly in neighboring slices.
+4. Build the Skeleton graph based on shared cross sections. First, place a node at each cross section (on each cut/bounding plane). Then, connect two nodes with an edge if there is a path of contiguous volume between the two points and the two points lie on adjacent cuts (i.e., they bound the same 3D slice).
 
 5. Validate volume and surface area conservation. The sum of the volumes of the segments should agree with the volume of the original mesh within a tolerance.
 
@@ -47,7 +47,7 @@ EXAMPLE:
         and the same internal surface area = pi*1^2 (cross section) = pi m^2.
     The two segments in the middle will have the same external surface area = 2*pi*1*1 (side) = 2pi m^2
         and the same internal surface area = 2*pi*1^2 (two cross sections) = 2pi m^2.
-    The skeleton graph should have 5 nodes (one at each cut and one at each bounding plane) and 4 edges (one between each pair of cuts).
+    The skeleton graph should have 5 node-planes (one at each cut and one at each bounding plane) and 4 edges (one between each pair of adjacent cuts, corresponding to the 4 slices).
 
 
 
@@ -68,7 +68,7 @@ import trimesh
 
 @dataclass
 class CrossSection:
-    """Planar cross-section at a specific z-position.
+    """Planar cross-section at a specific z-position (on a cut or bounding plane).
 
     Attributes:
         z: Z position of the cross-section plane in world coordinates.
@@ -76,8 +76,8 @@ class CrossSection:
         center: 3D center position [x, y, z] of the fitted disk (node position).
         radius: Radius of the fitted disk.
         boundary_2d: Optional Nx2 array of 2D boundary points (xy) used for fitting.
-        slice_index: Index of the slice this cross-section belongs to (0..n_slices).
-        index_within_slice: Index among cross-sections at the same z level.
+        cut_index: Index of the plane in the ordered stack of bounding/cut planes (0..n_slices).
+        index_within_cut: Index among cross-sections at the same z level (same cut).
     """
 
     z: float
@@ -85,17 +85,35 @@ class CrossSection:
     center: np.ndarray
     radius: float
     boundary_2d: Optional[np.ndarray]
-    slice_index: int
-    index_within_slice: int
+    cut_index: Optional[int] = None
+    index_within_cut: Optional[int] = None
+    # Back-compat inputs; if provided, they will be mapped to cut nomenclature
+    slice_index: Optional[int] = None
+    index_within_slice: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        # If legacy fields were provided without new ones, map them forward
+        if self.slice_index is not None and getattr(self, "cut_index", None) is None:
+            self.cut_index = int(self.slice_index)
+        if (
+            self.index_within_slice is not None
+            and getattr(self, "index_within_cut", None) is None
+        ):
+            self.index_within_cut = int(self.index_within_slice)
+        # Keep legacy mirrors synchronized for external consumers/tests
+        if getattr(self, "cut_index", None) is not None:
+            self.slice_index = int(self.cut_index)
+        if getattr(self, "index_within_cut", None) is not None:
+            self.index_within_slice = int(self.index_within_cut)
 
 
 @dataclass
 class Segment:
-    """Segment connecting two cross-sections in adjacent slices.
+    """Segment representing the 3D slice between two adjacent cuts.
 
     Attributes:
-        u_id: Node ID of the first cross-section (e.g., "slice{i}_cs{j}").
-        v_id: Node ID of the second cross-section (adjacent slice).
+        u_id: Node ID of the first cross-section (e.g., "cut{i}_cs{j}").
+        v_id: Node ID of the second cross-section (on the adjacent cut).
         length: Center-line length between cross-section centers.
         r1: Radius at node u.
         r2: Radius at node v.
@@ -179,7 +197,7 @@ def _polygon_area_and_centroid(points_2d: np.ndarray) -> Tuple[float, np.ndarray
 def _extract_cross_sections_for_plane(
     mesh: trimesh.Trimesh,
     z_value: float,
-    slice_index: int,
+    cut_index: int,
     radius_method: str = "area",
 ) -> List[CrossSection]:
     """Extract cross-sections at a given z-plane and fit disks.
@@ -190,13 +208,13 @@ def _extract_cross_sections_for_plane(
     Args:
         mesh: Watertight input mesh.
         z_value: World z of the cutting plane.
-        slice_index: Index of the plane in the slice stack.
+        cut_index: Index of the plane in the ordered stack of planes.
         radius_method: 'area' uses equivalent-area circle; 'algebraic' fits
             a circle to boundary points via linear least squares.
 
     Returns:
-        List of `CrossSection` objects ordered by discovery; `index_within_slice`
-        reflects that order within the given `slice_index`.
+        List of `CrossSection` objects ordered by discovery; `index_within_cut`
+        reflects that order within the given `cut_index`.
     """
     path = mesh.section(
         plane_origin=[0.0, 0.0, float(z_value)], plane_normal=[0.0, 0.0, 1.0]
@@ -223,12 +241,13 @@ def _extract_cross_sections_for_plane(
             continue
 
         if radius_method == "area":
-            # Equivalent area circle
+            # Equivalent area circle; center is polygon centroid
             r = float(np.sqrt(area / math.pi))
-            cx, cy = centroid_2d
+            cx, cy = float(centroid_2d[0]), float(centroid_2d[1])
         elif radius_method == "algebraic":
-            ctr2d, r = _fit_circle_algebraic(boundary_2d)
-            cx, cy = float(ctr2d[0]), float(ctr2d[1])
+            # Fit radius algebraically but center at polygon centroid to avoid drift
+            _ctr2d, r = _fit_circle_algebraic(boundary_2d)
+            cx, cy = float(centroid_2d[0]), float(centroid_2d[1])
         else:
             raise ValueError(f"Unknown radius_method: {radius_method}")
 
@@ -240,8 +259,8 @@ def _extract_cross_sections_for_plane(
                 center=center_3d,
                 radius=float(r),
                 boundary_2d=boundary_2d,
-                slice_index=slice_index,
-                index_within_slice=idx,
+                cut_index=cut_index,
+                index_within_cut=idx,
             )
         )
         idx += 1
@@ -249,10 +268,8 @@ def _extract_cross_sections_for_plane(
     return sections
 
 
-def _check_overlap_in_slice(
-    cross_sections: List[CrossSection], tolerance: float
-) -> None:
-    """Raise ValueError if any two disks in the same slice overlap beyond tolerance.
+def _check_overlap_in_cut(cross_sections: List[CrossSection], tolerance: float) -> None:
+    """Raise ValueError if any two disks on the same cut overlap beyond tolerance.
 
     Enforces the rule that cross-sections in the same plane must not overlap.
     This prevents edges from being created between nodes at the same z-plane.
@@ -267,9 +284,20 @@ def _check_overlap_in_slice(
                 if d + tolerance < (ci.radius + cj.radius):
                     raise ValueError(
                         f"Overlapping cross-sections at z={ci.z:.6g}: "
-                        f"slice {ci.slice_index} cs {ci.index_within_slice} and "
-                        f"slice {cj.slice_index} cs {cj.index_within_slice}"
+                        f"cut {ci.cut_index} cs {ci.index_within_cut} and "
+                        f"cut {cj.cut_index} cs {cj.index_within_cut}"
                     )
+
+
+def _check_overlap_in_slice(
+    cross_sections: List[CrossSection], tolerance: float
+) -> None:
+    """Backward-compat wrapper. Use `_check_overlap_in_cut`.
+
+    Accepts cross-sections (possibly constructed with legacy slice_* fields)
+    and enforces non-overlap within the same plane.
+    """
+    return _check_overlap_in_cut(cross_sections, tolerance)
 
 
 def _line_of_sight_inside(
@@ -308,6 +336,171 @@ def _line_of_sight_inside(
         return len(locations) == 0
 
 
+def _tube_inside(
+    mesh: trimesh.Trimesh,
+    p0: np.ndarray,
+    p1: np.ndarray,
+    r0: float,
+    r1: float,
+    axial_steps: int = 5,
+    radial_dirs: int = 8,
+    radius_fraction: float = 0.25,
+) -> bool:
+    """Check if a small-radius tube along the center-line stays inside the mesh.
+
+    We sample rings of points around the line from p0 to p1. At each axial step,
+    we take a radius = radius_fraction * lerp(r0, r1) and verify points are inside.
+    """
+    p0 = np.asarray(p0, dtype=float)
+    p1 = np.asarray(p1, dtype=float)
+    dir_vec = p1 - p0
+    L = float(np.linalg.norm(dir_vec))
+    if L <= 0:
+        return False
+    dir_unit = dir_vec / L
+
+    # Build an orthonormal frame (u, v) perpendicular to dir_unit
+    # Pick an arbitrary vector not parallel to dir_unit
+    a = np.array([1.0, 0.0, 0.0])
+    if abs(np.dot(a, dir_unit)) > 0.9:
+        a = np.array([0.0, 1.0, 0.0])
+    u = np.cross(dir_unit, a)
+    nu = np.linalg.norm(u)
+    if nu == 0:
+        return _line_of_sight_inside(mesh, p0, p1, max(1, axial_steps))
+    u /= nu
+    v = np.cross(dir_unit, u)
+
+    ts = np.linspace(0.0, 1.0, max(2, axial_steps))
+    thetas = np.linspace(0.0, 2.0 * math.pi, max(4, radial_dirs), endpoint=False)
+
+    # Prefer contains if available
+    use_contains = True
+    try:
+        _ = mesh.contains(np.zeros((1, 3)))
+    except Exception:
+        use_contains = False
+
+    for t in ts:
+        c = p0 * (1.0 - t) + p1 * t
+        r = radius_fraction * (r0 * (1.0 - t) + r1 * t)
+        if r <= 0:
+            # Degenerate ring; skip
+            continue
+        ring_pts = []
+        for th in thetas:
+            offset = r * (math.cos(th) * u + math.sin(th) * v)
+            ring_pts.append(c + offset)
+        P = np.asarray(ring_pts)
+        if use_contains:
+            try:
+                inside = mesh.contains(P)
+                if not bool(np.all(inside)):
+                    return False
+            except Exception:
+                # Fallback: ray heuristic from each point outward along +dir_unit
+                origins = P + (1e-6 * max(1.0, np.linalg.norm(mesh.extents))) * dir_unit
+                vectors = np.tile(dir_unit, (len(P), 1))
+                locations, _, _ = mesh.ray.intersects_location(origins, vectors)
+                if len(locations) > 0:
+                    return False
+        else:
+            origins = P + (1e-6 * max(1.0, np.linalg.norm(mesh.extents))) * dir_unit
+            vectors = np.tile(dir_unit, (len(P), 1))
+            locations, _, _ = mesh.ray.intersects_location(origins, vectors)
+            if len(locations) > 0:
+                return False
+    return True
+
+
+def _voxel_connectivity(
+    mesh: trimesh.Trimesh,
+    p0: np.ndarray,
+    p1: np.ndarray,
+    r0: float,
+    r1: float,
+    nx: int = 20,
+    ny: int = 20,
+    nz: int = 20,
+    margin_frac: float = 0.6,
+) -> bool:
+    """Coarse voxel BFS inside the mesh to test connectivity between neighborhoods.
+
+    Builds an axis-aligned box around the endpoints expanded by max(r0, r1)*margin,
+    samples a regular grid, keeps voxels whose centers are inside the mesh, and
+    runs a 6-connected BFS from the start neighborhood (near p0) to the end (near p1).
+
+    Returns True if a path exists. This is a robust fallback for branch points.
+    """
+    p0 = np.asarray(p0, dtype=float)
+    p1 = np.asarray(p1, dtype=float)
+    r_max = float(max(r0, r1))
+    # Bounding box
+    mins = np.minimum(p0, p1) - margin_frac * r_max
+    maxs = np.maximum(p0, p1) + margin_frac * r_max
+    # Ensure non-zero extents
+    ext = np.maximum(maxs - mins, 1e-9)
+    nx = max(8, int(nx))
+    ny = max(8, int(ny))
+    nz = max(8, int(nz))
+
+    xs = np.linspace(mins[0], maxs[0], nx)
+    ys = np.linspace(mins[1], maxs[1], ny)
+    zs = np.linspace(mins[2], maxs[2], nz)
+    # Create grid of points (centers)
+    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+    P = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
+
+    # Try contains in batches (to avoid failures on large arrays)
+    inside_flat = np.zeros(P.shape[0], dtype=bool)
+    batch = 50000
+    try:
+        for start in range(0, P.shape[0], batch):
+            end = min(start + batch, P.shape[0])
+            inside_flat[start:end] = mesh.contains(P[start:end])
+    except Exception:
+        # If contains not available, degrade to line-of-sight which we already tried
+        return False
+
+    inside = inside_flat.reshape((nx, ny, nz))
+
+    # Start/goal masks: within a fraction of r0/r1 from endpoints
+    def near_mask(c: np.ndarray, r: float, frac: float = 0.35) -> np.ndarray:
+        d2 = (X - c[0]) ** 2 + (Y - c[1]) ** 2 + (Z - c[2]) ** 2
+        return d2 <= (max(r * frac, 1e-9) ** 2)
+
+    start_mask = near_mask(p0, r0)
+    goal_mask = near_mask(p1, r1)
+    start = np.logical_and(inside, start_mask)
+    goal = np.logical_and(inside, goal_mask)
+    if not start.any() or not goal.any():
+        return False
+
+    # BFS over 6-neighborhood
+    from collections import deque
+
+    visited = np.zeros_like(inside, dtype=bool)
+    q = deque()
+    sx, sy, sz = np.where(start)
+    for a, b, c in zip(sx, sy, sz):
+        visited[a, b, c] = True
+        q.append((a, b, c))
+
+    neigh = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+
+    while q:
+        a, b, c = q.popleft()
+        if goal[a, b, c]:
+            return True
+        for da, db, dc in neigh:
+            ia, ib, ic = a + da, b + db, c + dc
+            if 0 <= ia < nx and 0 <= ib < ny and 0 <= ic < nz:
+                if not visited[ia, ib, ic] and inside[ia, ib, ic]:
+                    visited[ia, ib, ic] = True
+                    q.append((ia, ib, ic))
+    return False
+
+
 def _frustum_volume(h: float, r1: float, r2: float) -> float:
     """Volume of a circular frustum with height h and radii r1, r2."""
     return math.pi * h * (r1 * r1 + r1 * r2 + r2 * r2) / 3.0
@@ -320,8 +513,8 @@ class SkeletonGraph(nx.Graph):
         - center: np.ndarray(3,)
         - radius: float
         - z: float
-        - slice_index: int
-        - index_within_slice: int
+        - cut_index: int
+        - index_within_cut: int
         - area: float
 
     Edge attributes:
@@ -336,10 +529,13 @@ class SkeletonGraph(nx.Graph):
         self,
         axis: str = "x",
         ax: Any = None,
+        figsize: Optional[Tuple[float, float]] = None,
         with_labels: bool = False,
         node_size: int = 50,
         node_color: str = "C0",
         edge_color: str = "0.6",
+        min_hv_ratio: float = 0.3,
+        pad_frac: float = 0.05,
         **kwargs: Any,
     ) -> Any:
         """Draw the skeleton graph in 2D using (x,z) or (y,z) coordinates.
@@ -347,10 +543,16 @@ class SkeletonGraph(nx.Graph):
         Args:
             axis: Horizontal axis to use ("x" or "y"). Vertical axis is always z.
             ax: Optional matplotlib Axes to draw into. If None, a new figure/axes is created.
+            figsize: Optional (width, height) in inches when creating a new figure.
             with_labels: Whether to render node labels.
             node_size: Node marker size passed to networkx.draw.
             node_color: Node color.
             edge_color: Edge color.
+            min_hv_ratio: Minimum desired horizontal-to-vertical data range ratio.
+                If the horizontal data span is less than this ratio times the
+                vertical (z) span, x/y limits are expanded around the mean to
+                meet this minimum. Helps avoid an overly thin vertical line.
+            pad_frac: Fractional padding added to both axes limits for readability.
             **kwargs: Additional kwargs forwarded to networkx.draw.
 
         Returns:
@@ -369,11 +571,47 @@ class SkeletonGraph(nx.Graph):
                 continue
             pos[n] = (float(c[idx]), float(c[2]))  # (x|y, z)
 
+        # Compute data bounds
+        if len(pos) == 0:
+            if ax is None:
+                fig, ax = plt.subplots(figsize=figsize)
+            ax.set_xlabel(f"{axis} (horizontal)")
+            ax.set_ylabel("z (vertical)")
+            return ax
+
+        xs = np.array([p[0] for p in pos.values()], dtype=float)
+        zs = np.array([p[1] for p in pos.values()], dtype=float)
+        xmin, xmax = float(xs.min()), float(xs.max())
+        zmin, zmax = float(zs.min()), float(zs.max())
+        xmid = 0.5 * (xmin + xmax)
+        zmid = 0.5 * (zmin + zmax)
+        xr = max(xmax - xmin, 1e-12)
+        zr = max(zmax - zmin, 1e-12)
+
+        # Enforce a minimum horizontal span relative to vertical span
+        min_xr = max(min_hv_ratio * zr, xr)
+        if min_xr > xr:
+            xmin = xmid - 0.5 * min_xr
+            xmax = xmid + 0.5 * min_xr
+            xr = min_xr
+
+        # Apply padding
+        xmin -= pad_frac * xr
+        xmax += pad_frac * xr
+        zmin -= pad_frac * zr
+        zmax += pad_frac * zr
+
         # Prepare axes
-        created_fig = False
         if ax is None:
-            fig, ax = plt.subplots()
-            created_fig = True
+            # Auto figsize that respects data aspect for clarity
+            if figsize is None:
+                # Base height and width with reasonable minimums
+                base_h = 4.0
+                # width scaled by data aspect (horizontal over vertical)
+                aspect = xr / zr if zr > 0 else 1.0
+                base_w = max(4.0, base_h * max(aspect, min_hv_ratio))
+                figsize = (base_w, base_h)
+            fig, ax = plt.subplots(figsize=figsize)
 
         # Draw using networkx helper
         nx.draw(
@@ -389,14 +627,175 @@ class SkeletonGraph(nx.Graph):
 
         ax.set_xlabel(f"{axis} (horizontal)")
         ax.set_ylabel("z (vertical)")
-        # Aim for equal aspect in data coordinates when possible
+        # Set limits and aspect for a clear, readable plot
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(zmin, zmax)
         try:
             ax.set_aspect("equal", adjustable="box")
         except Exception:
-            pass
+            # Fallback to auto if backend cannot honor equal aspect
+            ax.set_aspect("auto")
 
-        # If we created the figure, return its axes; otherwise return provided ax
+        # Return provided or newly-created axes
         return ax
+
+    def plot_cross_section(
+        self,
+        node_id: str,
+        ax: Any = None,
+        boundary_color: str = "k",
+        circle_color: str = "C1",
+        center_color: str = "C2",
+        linewidth: float = 1.5,
+        alpha_boundary: float = 0.9,
+        alpha_circle: float = 0.8,
+        show_center: bool = True,
+        title: Optional[str] = None,
+    ) -> Any:
+        """Plot the cross-section boundary curve with its fitted disk.
+
+        Expects node attributes `boundary_2d`, `center`, and `radius`.
+
+        Args:
+            node_id: Graph node identifier (e.g., "cut3_cs0").
+            ax: Optional matplotlib Axes; if None, a new one is created.
+            boundary_color: Color for the boundary polyline.
+            circle_color: Color for the fitted circle.
+            center_color: Color for the center marker.
+            linewidth: Line width for boundary and circle.
+            alpha_boundary: Alpha for the boundary.
+            alpha_circle: Alpha for the circle.
+            show_center: Whether to draw the center point.
+            title: Optional title; defaults to node id with cut/index.
+
+        Returns:
+            The matplotlib Axes used for drawing.
+        """
+        if node_id not in self.nodes:
+            raise KeyError(f"Node '{node_id}' not in SkeletonGraph")
+
+        attrs = self.nodes[node_id]
+        boundary_2d = attrs.get("boundary_2d")
+        center = attrs.get("center")
+        radius = attrs.get("radius")
+
+        if boundary_2d is None or len(boundary_2d) < 2:
+            warnings.warn(f"Node '{node_id}' has no boundary_2d; cannot plot boundary.")
+        if center is None or radius is None:
+            raise ValueError(
+                f"Node '{node_id}' missing center/radius required for plotting"
+            )
+
+        # Prepare axes
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        # Plot boundary polyline
+        if boundary_2d is not None and len(boundary_2d) >= 2:
+            bx = boundary_2d[:, 0]
+            by = boundary_2d[:, 1]
+            ax.plot(bx, by, color=boundary_color, lw=linewidth, alpha=alpha_boundary)
+
+        # Plot fitted circle
+        cx, cy = float(center[0]), float(center[1])
+        r = float(radius)
+        theta = np.linspace(0.0, 2.0 * math.pi, 256)
+        ax.plot(
+            cx + r * np.cos(theta),
+            cy + r * np.sin(theta),
+            color=circle_color,
+            lw=linewidth,
+            alpha=alpha_circle,
+        )
+        if show_center:
+            ax.plot([cx], [cy], marker="o", color=center_color, ms=4)
+
+        # Cosmetics
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        default_title = title
+        if default_title is None:
+            ci = attrs.get("cut_index")
+            ii = attrs.get("index_within_cut")
+            default_title = f"{node_id} (cut {ci}, cs {ii})"
+        ax.set_title(default_title)
+
+        return ax
+
+    def plot_all_cross_sections(
+        self,
+        sort_by: Tuple[str, str] = ("cut_index", "index_within_cut"),
+        max_cols: int = 4,
+        figsize: Optional[Tuple[float, float]] = None,
+        share_axes: bool = False,
+        boundary_color: str = "k",
+        circle_color: str = "C1",
+    ) -> Any:
+        """Plot every cross-section boundary with its fitted disk in a grid.
+
+        Args:
+            sort_by: Tuple of node attribute names to sort nodes (primary, secondary).
+            max_cols: Max number of subplot columns.
+            figsize: Figure size; auto if None.
+            share_axes: Whether to share x/y among subplots.
+            boundary_color: Color for boundaries.
+            circle_color: Color for circles.
+
+        Returns:
+            The matplotlib Figure created.
+        """
+        # Gather nodes that have boundary_2d and required attributes
+        nodes = []
+        for nid, attrs in self.nodes(data=True):
+            if attrs.get("center") is None or attrs.get("radius") is None:
+                continue
+            nodes.append((nid, attrs))
+
+        # Sort nodes by provided attributes if present
+        def sort_key(item: Tuple[str, Dict[str, Any]]):
+            _, a = item
+            return tuple(a.get(k, 0) for k in sort_by)
+
+        nodes.sort(key=sort_key)
+        n = len(nodes)
+        if n == 0:
+            warnings.warn("No nodes available to plot")
+            return None
+
+        ncols = max(1, int(max_cols))
+        nrows = int(math.ceil(n / ncols))
+        if figsize is None:
+            figsize = (4 * ncols, 4 * nrows)
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=figsize,
+            squeeze=False,
+            sharex=share_axes,
+            sharey=share_axes,
+        )
+
+        for idx, (nid, _) in enumerate(nodes):
+            r = idx // ncols
+            c = idx % ncols
+            ax = axes[r][c]
+            self.plot_cross_section(
+                nid,
+                ax=ax,
+                boundary_color=boundary_color,
+                circle_color=circle_color,
+                show_center=True,
+            )
+
+        # Hide any unused subplots
+        for k in range(n, nrows * ncols):
+            r = k // ncols
+            c = k % ncols
+            axes[r][c].axis("off")
+
+        fig.tight_layout()
+        return fig
 
     @classmethod
     def from_mesh(
@@ -413,10 +812,10 @@ class SkeletonGraph(nx.Graph):
 
         Args:
             mesh_or_manager: trimesh.Trimesh or object with .mesh (Trimesh)
-            n_slices: Number of slices (cuts = n_slices - 1). Must be >= 1.
+            n_slices: Number of 3D slices (thus internal cuts = n_slices - 1). Must be >= 1.
             radius_method: 'area' (equivalent area circle) or 'algebraic'.
             samples_per_edge: Samples for inside-volume line-of-sight.
-            overlap_tolerance: Tolerance for overlap detection in same slice.
+            overlap_tolerance: Tolerance for overlap detection on the same cut.
             validate: If True, validate approximate volume conservation.
             volume_tol: Relative tolerance for volume conservation (e.g., 0.05 = 5%).
 
@@ -453,75 +852,169 @@ class SkeletonGraph(nx.Graph):
             z_positions[0] = min(z_positions[0] + eps, z_positions[1] - eps * 0.5)
             z_positions[-1] = max(z_positions[-1] - eps, z_positions[-2] + eps * 0.5)
 
-        # 3. Extract cross-sections at each node plane
-        cs_by_slice: List[List[CrossSection]] = []
-        for si, z in enumerate(z_positions):
+        # 3. Extract cross-sections at each node plane (each cut or bounding plane)
+        cs_by_cut: List[List[CrossSection]] = []
+        for ci, z in enumerate(z_positions):
             sections = _extract_cross_sections_for_plane(
-                mesh, float(z), slice_index=si, radius_method=radius_method
+                mesh, float(z), cut_index=ci, radius_method=radius_method
             )
             if len(sections) == 0:
                 warnings.warn(f"No cross-sections found at z={float(z):.6g}")
             # Enforce non-overlap among same-plane cross-sections.
-            _check_overlap_in_slice(sections, tolerance=overlap_tolerance)
-            cs_by_slice.append(sections)
+            _check_overlap_in_cut(sections, tolerance=overlap_tolerance)
+            cs_by_cut.append(sections)
 
         # 4. Build graph nodes
         G = cls()
-        node_ids_by_slice: List[List[str]] = []
-        for si, sections in enumerate(cs_by_slice):
-            ids_this_slice: List[str] = []
+        node_ids_by_cut: List[List[str]] = []
+        for ci, sections in enumerate(cs_by_cut):
+            ids_this_cut: List[str] = []
             for cs in sections:
-                node_id = f"slice{si}_cs{cs.index_within_slice}"
-                ids_this_slice.append(node_id)
+                node_id = f"cut{ci}_cs{cs.index_within_cut}"
+                ids_this_cut.append(node_id)
                 G.add_node(
                     node_id,
                     center=cs.center,
                     radius=cs.radius,
                     z=cs.z,
+                    cut_index=cs.cut_index,
+                    index_within_cut=cs.index_within_cut,
+                    # Legacy mirrors for compatibility with existing code/tests
                     slice_index=cs.slice_index,
                     index_within_slice=cs.index_within_slice,
                     area=cs.area,
+                    boundary_2d=cs.boundary_2d,
                 )
-            node_ids_by_slice.append(ids_this_slice)
+            node_ids_by_cut.append(ids_this_cut)
 
-        # 5. Connect adjacent slices based on inside-volume line-of-sight.
-        #    Only adjacent slices may connect; same-slice connections are disallowed.
+        # 5. Connect adjacent cuts based on inside-volume line-of-sight.
+        #    Only adjacent cuts may connect; same-cut connections are disallowed.
         segments: List[Segment] = []
-        for si in range(len(cs_by_slice) - 1):
-            lower = cs_by_slice[si]
-            upper = cs_by_slice[si + 1]
+        for ci in range(len(cs_by_cut) - 1):
+            lower = cs_by_cut[ci]
+            upper = cs_by_cut[ci + 1]
+
+            # Compute per-cut centroids and angular positions for gating
+            def cut_stats(sections: List[CrossSection]):
+                if not sections:
+                    return np.array([0.0, 0.0]), np.array([]), np.array([])
+                C = np.vstack([s.center[:2] for s in sections])
+                cxy = C.mean(axis=0)
+                V = C - cxy
+                R = np.linalg.norm(V, axis=1)
+                theta = np.arctan2(V[:, 1], V[:, 0])
+                return cxy, R, theta
+
+            lower_cxy, lower_R, lower_theta = cut_stats(lower)
+            upper_cxy, upper_R, upper_theta = cut_stats(upper)
+
+            # Define near-axis thresholds (skip angle gating there to allow branching)
+            def near_axis(R: np.ndarray) -> float:
+                if R.size == 0:
+                    return 0.0
+                med = float(np.median(R))
+                return 0.25 * med
+
+            lower_axis_eps = near_axis(lower_R)
+            upper_axis_eps = near_axis(upper_R)
+            angle_gate = math.pi / 3.0  # 60 degrees
             for i, c0 in enumerate(lower):
+                # Gather all valid candidates to upper with XY distance for pruning
+                candidates: List[Tuple[int, float, float]] = []  # (j, d_xy, length)
+                length_cache: Dict[int, float] = {}
                 for j, c1 in enumerate(upper):
-                    # Rule: only adjacent slices may connect (we are in adjacent slices)
-                    # Check inside-volume path via straight line between centers.
-                    # If all sampled points lie inside, add an edge representing a
-                    # circular frustum between radii r1 and r2.
-                    if _line_of_sight_inside(
+                    axial_steps = max(3, int(max(1, samples_per_edge) // 4))
+                    # Connectivity checks (any can pass)
+                    los_ok = _line_of_sight_inside(
                         mesh, c0.center, c1.center, samples_per_edge
-                    ):
-                        u_id = f"slice{si}_cs{i}"
-                        v_id = f"slice{si + 1}_cs{j}"
-                        length = float(np.linalg.norm(c1.center - c0.center))
-                        vol = _frustum_volume(length, c0.radius, c1.radius)
-                        seg = Segment(
-                            u_id=u_id,
-                            v_id=v_id,
-                            length=length,
-                            r1=float(c0.radius),
-                            r2=float(c1.radius),
-                            volume=vol,
-                            center_line=np.vstack([c0.center, c1.center]),
+                    )
+                    tube_ok = _tube_inside(
+                        mesh,
+                        c0.center,
+                        c1.center,
+                        float(c0.radius),
+                        float(c1.radius),
+                        axial_steps=axial_steps,
+                        radial_dirs=8,
+                        radius_fraction=0.25,
+                    )
+                    voxel_ok = False
+                    if not tube_ok and not los_ok:
+                        voxel_ok = _voxel_connectivity(
+                            mesh,
+                            c0.center,
+                            c1.center,
+                            float(c0.radius),
+                            float(c1.radius),
+                            nx=20,
+                            ny=20,
+                            nz=20,
                         )
-                        segments.append(seg)
-                        G.add_edge(
-                            u_id,
-                            v_id,
-                            length=length,
-                            r1=float(c0.radius),
-                            r2=float(c1.radius),
-                            volume=vol,
-                            center_line=np.vstack([c0.center, c1.center]),
-                        )
+                    if not (los_ok or tube_ok or voxel_ok):
+                        continue
+                    # XY gating to avoid cross connections across a void
+                    d_xy = float(np.linalg.norm(c1.center[:2] - c0.center[:2]))
+                    # Require XY proximity relative to disk sizes
+                    overlap_gate = d_xy <= 1.25 * (float(c0.radius) + float(c1.radius))
+                    if not overlap_gate:
+                        continue
+                    # Angular gating around per-cut centroid to keep side-consistent matches
+                    # Skip if either endpoint is near the cut centroid (branching / axial nodes)
+                    i_near_axis = (
+                        (lower_R[i] <= max(1e-9, lower_axis_eps))
+                        if i < lower_R.size
+                        else True
+                    )
+                    j_near_axis = (
+                        (upper_R[j] <= max(1e-9, upper_axis_eps))
+                        if j < upper_R.size
+                        else True
+                    )
+                    if not (i_near_axis or j_near_axis):
+                        th0 = float(lower_theta[i]) if i < lower_theta.size else 0.0
+                        th1 = float(upper_theta[j]) if j < upper_theta.size else 0.0
+                        dth = abs((th1 - th0 + math.pi) % (2.0 * math.pi) - math.pi)
+                        if dth > angle_gate:
+                            continue
+                    length = float(np.linalg.norm(c1.center - c0.center))
+                    length_cache[j] = length
+                    candidates.append((j, d_xy, length))
+
+                if not candidates:
+                    continue
+                # Nearest-neighbor pruning in XY
+                candidates.sort(key=lambda t: t[1])
+                dmin = candidates[0][1]
+                # Allow those within 1.25x of nearest
+                keep = [c for c in candidates if c[1] <= 1.25 * dmin]
+                # Cap connections per node to avoid crisscross; if branching (one-to-many), allow up to 2
+                max_conn = 2 if (len(lower) == 1 and len(upper) > 1) else 1
+                keep = keep[:max_conn]
+
+                for j, d_xy, length in keep:
+                    c1 = upper[j]
+                    u_id = f"cut{ci}_cs{i}"
+                    v_id = f"cut{ci + 1}_cs{j}"
+                    vol = _frustum_volume(length, c0.radius, c1.radius)
+                    seg = Segment(
+                        u_id=u_id,
+                        v_id=v_id,
+                        length=length,
+                        r1=float(c0.radius),
+                        r2=float(c1.radius),
+                        volume=vol,
+                        center_line=np.vstack([c0.center, c1.center]),
+                    )
+                    segments.append(seg)
+                    G.add_edge(
+                        u_id,
+                        v_id,
+                        length=length,
+                        r1=float(c0.radius),
+                        r2=float(c1.radius),
+                        volume=vol,
+                        center_line=np.vstack([c0.center, c1.center]),
+                    )
 
         # 6. Validate volume conservation (approximate).
         #    Compare the sum of frustum volumes against the mesh volume.
