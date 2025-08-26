@@ -58,6 +58,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import trimesh
@@ -115,7 +116,12 @@ class Segment:
 
 
 def _ensure_trimesh(mesh_or_manager: Union[trimesh.Trimesh, Any]) -> trimesh.Trimesh:
-    """Return a trimesh.Trimesh from either a Trimesh or MeshManager-like object."""
+    """Return a `trimesh.Trimesh` from either a Trimesh or MeshManager-like object.
+
+    If `mesh_or_manager` is a wrapper (e.g., a `MeshManager`) that exposes a
+    `.mesh` attribute containing a `trimesh.Trimesh`, that underlying mesh is
+    returned. Otherwise, the input must already be a `trimesh.Trimesh`.
+    """
     if isinstance(mesh_or_manager, trimesh.Trimesh):
         return mesh_or_manager
     # Lazy import/interface to avoid circular import
@@ -178,8 +184,19 @@ def _extract_cross_sections_for_plane(
 ) -> List[CrossSection]:
     """Extract cross-sections at a given z-plane and fit disks.
 
-    Uses trimesh.Trimesh.section -> Path3D -> discrete polylines.
+    Uses `trimesh.Trimesh.section` -> `Path3D` -> discrete polylines.
     For each discrete closed loop, computes area and a center/radius.
+
+    Args:
+        mesh: Watertight input mesh.
+        z_value: World z of the cutting plane.
+        slice_index: Index of the plane in the slice stack.
+        radius_method: 'area' uses equivalent-area circle; 'algebraic' fits
+            a circle to boundary points via linear least squares.
+
+    Returns:
+        List of `CrossSection` objects ordered by discovery; `index_within_slice`
+        reflects that order within the given `slice_index`.
     """
     path = mesh.section(
         plane_origin=[0.0, 0.0, float(z_value)], plane_normal=[0.0, 0.0, 1.0]
@@ -188,7 +205,8 @@ def _extract_cross_sections_for_plane(
         return []
 
     sections: List[CrossSection] = []
-    # For robustness, use 3D discrete loops and drop z to obtain 2D boundaries
+    # For robustness: use 3D discrete loops returned by trimesh, then drop z
+    # to obtain 2D boundaries for area/center/radius computations.
     try:
         loops_3d = path.discrete
     except Exception:
@@ -234,7 +252,11 @@ def _extract_cross_sections_for_plane(
 def _check_overlap_in_slice(
     cross_sections: List[CrossSection], tolerance: float
 ) -> None:
-    """Raise ValueError if any two disks in the same slice overlap beyond tolerance."""
+    """Raise ValueError if any two disks in the same slice overlap beyond tolerance.
+
+    Enforces the rule that cross-sections in the same plane must not overlap.
+    This prevents edges from being created between nodes at the same z-plane.
+    """
     n = len(cross_sections)
     for i in range(n):
         for j in range(i + 1, n):
@@ -269,8 +291,9 @@ def _line_of_sight_inside(
         inside = mesh.contains(pts)
         return bool(np.all(inside))
     except Exception:
-        # Fallback: if contains isn't available, assume connectivity if no ray intersects
-        # along the center-line. This is a best-effort approximation.
+        # Fallback: if `contains` isn't available or fails, assume connectivity
+        # if a ray along the center-line doesn't immediately intersect the surface.
+        # This is a best-effort approximation and may be conservative.
         direction = p1 - p0
         length = np.linalg.norm(direction)
         if length <= 0:
@@ -309,6 +332,72 @@ class SkeletonGraph(nx.Graph):
         - center_line: np.ndarray shape (2, 3)
     """
 
+    def draw(
+        self,
+        axis: str = "x",
+        ax: Any = None,
+        with_labels: bool = False,
+        node_size: int = 50,
+        node_color: str = "C0",
+        edge_color: str = "0.6",
+        **kwargs: Any,
+    ) -> Any:
+        """Draw the skeleton graph in 2D using (x,z) or (y,z) coordinates.
+
+        Args:
+            axis: Horizontal axis to use ("x" or "y"). Vertical axis is always z.
+            ax: Optional matplotlib Axes to draw into. If None, a new figure/axes is created.
+            with_labels: Whether to render node labels.
+            node_size: Node marker size passed to networkx.draw.
+            node_color: Node color.
+            edge_color: Edge color.
+            **kwargs: Additional kwargs forwarded to networkx.draw.
+
+        Returns:
+            The matplotlib Axes used for drawing.
+        """
+        axis = axis.lower()
+        if axis not in ("x", "y"):
+            raise ValueError("axis must be 'x' or 'y'")
+
+        # Build 2D positions from node 3D centers
+        idx = 0 if axis == "x" else 1
+        pos: Dict[str, Tuple[float, float]] = {}
+        for n, attrs in self.nodes(data=True):
+            c = attrs.get("center")
+            if c is None or len(c) != 3:
+                continue
+            pos[n] = (float(c[idx]), float(c[2]))  # (x|y, z)
+
+        # Prepare axes
+        created_fig = False
+        if ax is None:
+            fig, ax = plt.subplots()
+            created_fig = True
+
+        # Draw using networkx helper
+        nx.draw(
+            self,
+            pos=pos,
+            ax=ax,
+            with_labels=with_labels,
+            node_size=node_size,
+            node_color=node_color,
+            edge_color=edge_color,
+            **kwargs,
+        )
+
+        ax.set_xlabel(f"{axis} (horizontal)")
+        ax.set_ylabel("z (vertical)")
+        # Aim for equal aspect in data coordinates when possible
+        try:
+            ax.set_aspect("equal", adjustable="box")
+        except Exception:
+            pass
+
+        # If we created the figure, return its axes; otherwise return provided ax
+        return ax
+
     @classmethod
     def from_mesh(
         cls,
@@ -333,6 +422,15 @@ class SkeletonGraph(nx.Graph):
 
         Returns:
             SkeletonGraph instance.
+
+        Notes:
+            - Nodes are cross-sections at each z-plane, located at fitted circle
+              centers with an associated radius and area.
+            - Edges only connect nodes from adjacent planes when a straight
+              center-line between node centers stays inside the mesh (no same-plane
+              connections).
+            - Cross-sections within the same plane must not overlap; an error is
+              raised if they do (with a small `overlap_tolerance`).
         """
         mesh = _ensure_trimesh(mesh_or_manager)
 
@@ -345,9 +443,11 @@ class SkeletonGraph(nx.Graph):
             raise ValueError("n_slices must be >= 1")
         zmin, zmax = float(mesh.bounds[0, 2]), float(mesh.bounds[1, 2])
         # n_slices implies cuts = n_slices - 1, total node planes = n_slices + 1
+        # These z-positions include the bounding planes and internal cuts.
         z_positions = np.linspace(zmin, zmax, n_slices + 1)
 
-        # Slightly nudge the first/last for robust interior cross-sections
+        # Slightly nudge the first/last planes inward to avoid grazing the
+        # exterior surface exactly at extremes (helps robust sectioning).
         eps = 1e-6 * max(1.0, float(np.linalg.norm(mesh.extents)))
         if len(z_positions) >= 2:
             z_positions[0] = min(z_positions[0] + eps, z_positions[1] - eps * 0.5)
@@ -361,6 +461,7 @@ class SkeletonGraph(nx.Graph):
             )
             if len(sections) == 0:
                 warnings.warn(f"No cross-sections found at z={float(z):.6g}")
+            # Enforce non-overlap among same-plane cross-sections.
             _check_overlap_in_slice(sections, tolerance=overlap_tolerance)
             cs_by_slice.append(sections)
 
@@ -383,7 +484,8 @@ class SkeletonGraph(nx.Graph):
                 )
             node_ids_by_slice.append(ids_this_slice)
 
-        # 5. Connect adjacent slices based on inside-volume line-of-sight
+        # 5. Connect adjacent slices based on inside-volume line-of-sight.
+        #    Only adjacent slices may connect; same-slice connections are disallowed.
         segments: List[Segment] = []
         for si in range(len(cs_by_slice) - 1):
             lower = cs_by_slice[si]
@@ -391,7 +493,9 @@ class SkeletonGraph(nx.Graph):
             for i, c0 in enumerate(lower):
                 for j, c1 in enumerate(upper):
                     # Rule: only adjacent slices may connect (we are in adjacent slices)
-                    # Check inside-volume path via straight line between centers
+                    # Check inside-volume path via straight line between centers.
+                    # If all sampled points lie inside, add an edge representing a
+                    # circular frustum between radii r1 and r2.
                     if _line_of_sight_inside(
                         mesh, c0.center, c1.center, samples_per_edge
                     ):
@@ -419,7 +523,8 @@ class SkeletonGraph(nx.Graph):
                             center_line=np.vstack([c0.center, c1.center]),
                         )
 
-        # 6. Validate volume conservation (approximate)
+        # 6. Validate volume conservation (approximate).
+        #    Compare the sum of frustum volumes against the mesh volume.
         if validate and len(segments) > 0:
             approx_vol = float(sum(s.volume for s in segments))
             mesh_vol = float(mesh.volume) if hasattr(mesh, "volume") else np.nan

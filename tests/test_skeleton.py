@@ -17,7 +17,16 @@ import numpy as np
 import pytest
 
 from discos import create_cylinder_mesh, create_demo_neuron_mesh, create_torus_mesh
-from discos.skeleton import SkeletonGraph, skeletonize
+from discos.skeleton import (
+    CrossSection,
+    Segment,
+    SkeletonGraph,
+    _check_overlap_in_slice,
+    _fit_circle_algebraic,
+    _line_of_sight_inside,
+    _polygon_area_and_centroid,
+    skeletonize,
+)
 
 # ---- Fixtures ---------------------------------------------------------------
 
@@ -165,3 +174,142 @@ def test_neuron_skeleton_branching(neuron_mesh):
 
     # Volumes positive
     assert _sum_edge_volumes(G) > 0
+
+
+# ---- Tests: Helper functions and dataclasses ---------------------------------
+
+
+def test_polygon_area_and_centroid_square():
+    # Unit square with centroid at (0.5, 0.5)
+    pts = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=float)
+    area, ctr = _polygon_area_and_centroid(pts)
+    assert np.isclose(area, 1.0)
+    assert np.allclose(ctr, [0.5, 0.5])
+
+
+def test_fit_circle_algebraic_perfect_circle():
+    # Points on a circle centered at (2, -1) with radius 3
+    rng = np.random.default_rng(0)
+    angles = np.linspace(0, 2 * np.pi, 50, endpoint=False)
+    pts = np.stack([2 + 3 * np.cos(angles), -1 + 3 * np.sin(angles)], axis=1)
+    # small noise
+    pts += 1e-6 * rng.standard_normal(size=pts.shape)
+    center, r = _fit_circle_algebraic(pts)
+    assert np.allclose(center, [2, -1], atol=1e-3)
+    assert np.isclose(r, 3.0, atol=1e-3)
+
+
+def test_check_overlap_in_slice_raises_on_overlap():
+    # Two cross-sections at same z with overlapping radii
+    z = 0.0
+    cs1 = CrossSection(
+        z=z,
+        area=np.pi * 1.0**2,
+        center=np.array([0.0, 0.0, z], dtype=float),
+        radius=1.0,
+        boundary_2d=None,
+        slice_index=0,
+        index_within_slice=0,
+    )
+    cs2 = CrossSection(
+        z=z,
+        area=np.pi * 1.0**2,
+        center=np.array([1.2, 0.0, z], dtype=float),  # centers 1.2 apart
+        radius=1.0,
+        boundary_2d=None,
+        slice_index=0,
+        index_within_slice=1,
+    )
+    with pytest.raises(ValueError):
+        _check_overlap_in_slice([cs1, cs2], tolerance=1e-6)
+
+
+def test_check_overlap_in_slice_allows_separated():
+    z = 0.0
+    cs1 = CrossSection(
+        z=z,
+        area=np.pi * 1.0**2,
+        center=np.array([0.0, 0.0, z], dtype=float),
+        radius=1.0,
+        boundary_2d=None,
+        slice_index=0,
+        index_within_slice=0,
+    )
+    cs2 = CrossSection(
+        z=z,
+        area=np.pi * 1.0**2,
+        center=np.array([2.5, 0.0, z], dtype=float),  # far enough apart
+        radius=1.0,
+        boundary_2d=None,
+        slice_index=0,
+        index_within_slice=1,
+    )
+    # Should not raise
+    _check_overlap_in_slice([cs1, cs2], tolerance=1e-6)
+
+
+def test_line_of_sight_inside_true_for_cylinder_axis(cylinder_mesh):
+    # For a z-aligned cylinder: pick two points along the axis, strictly inside
+    zmin, zmax = float(cylinder_mesh.bounds[0, 2]), float(cylinder_mesh.bounds[1, 2])
+    p0 = np.array([0.0, 0.0, zmin + 0.25 * (zmax - zmin)], dtype=float)
+    p1 = np.array([0.0, 0.0, zmin + 0.75 * (zmax - zmin)], dtype=float)
+    assert _line_of_sight_inside(cylinder_mesh, p0, p1, n_samples=10) is True
+
+
+def test_line_of_sight_inside_false_outside(cylinder_mesh):
+    # One point inside near center, another far outside radially
+    zc = float(np.mean([cylinder_mesh.bounds[0, 2], cylinder_mesh.bounds[1, 2]]))
+    p0 = np.array([0.0, 0.0, zc], dtype=float)
+    p1 = np.array([1e3, 0.0, zc], dtype=float)
+    assert _line_of_sight_inside(cylinder_mesh, p0, p1, n_samples=10) is False
+
+
+def test_dataclasses_construction_and_fields():
+    ctr = np.array([1.0, 2.0, 3.0], dtype=float)
+    cs = CrossSection(
+        z=3.0,
+        area=12.34,
+        center=ctr,
+        radius=5.6,
+        boundary_2d=None,
+        slice_index=7,
+        index_within_slice=2,
+    )
+    assert cs.z == 3.0
+    assert np.allclose(cs.center, ctr)
+    assert cs.radius == 5.6
+    assert cs.slice_index == 7 and cs.index_within_slice == 2
+
+    seg = Segment(
+        u_id="u",
+        v_id="v",
+        length=10.0,
+        r1=1.0,
+        r2=2.0,
+        volume=20.0,
+        center_line=np.vstack([np.zeros(3), np.ones(3)]),
+    )
+    assert seg.u_id == "u" and seg.v_id == "v"
+    assert np.isclose(seg.length, 10.0) and np.isclose(seg.r1, 1.0) and np.isclose(seg.r2, 2.0)
+    assert np.isclose(seg.volume, 20.0)
+    assert seg.center_line.shape == (2, 3)
+
+
+def test_skeletongraph_from_mesh_node_and_edge_attrs(cylinder_mesh):
+    G = skeletonize(cylinder_mesh, n_slices=5, validate=False)
+    # Node attributes present and typed
+    for _, attrs in G.nodes(data=True):
+        assert "center" in attrs and isinstance(attrs["center"], np.ndarray)
+        assert "radius" in attrs and isinstance(attrs["radius"], float)
+        assert "z" in attrs and isinstance(attrs["z"], float)
+        assert "slice_index" in attrs and isinstance(attrs["slice_index"], int)
+        assert "index_within_slice" in attrs and isinstance(attrs["index_within_slice"], int)
+        assert "area" in attrs and isinstance(attrs["area"], float)
+    # Edge attributes present and typed
+    for _, _, data in G.edges(data=True):
+        assert "length" in data and isinstance(data["length"], float)
+        assert "r1" in data and isinstance(data["r1"], float)
+        assert "r2" in data and isinstance(data["r2"], float)
+        assert "volume" in data and isinstance(data["volume"], float)
+        assert "center_line" in data and isinstance(data["center_line"], np.ndarray)
+        assert data["center_line"].shape == (2, 3)
