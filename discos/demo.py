@@ -5,10 +5,12 @@ Provides example mesh generators for neuronal morphologies using trimesh.
 These functions create standard geometries for tutorials and demonstrations.
 """
 
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import trimesh
-from typing import Tuple, Optional, Dict, Any, List
-import warnings
+
 
 def create_cylinder_mesh(
     length: float = 100.0,
@@ -31,7 +33,9 @@ def create_cylinder_mesh(
         Trimesh cylinder object
     """
     # Create cylinder along z-axis first
-    cylinder = trimesh.creation.cylinder(radius=radius, height=length, sections=resolution)
+    cylinder = trimesh.creation.cylinder(
+        radius=radius, height=length, sections=resolution
+    )
 
     # Rotate to desired axis if needed
     if axis.lower() == "x":
@@ -54,7 +58,9 @@ def create_cylinder_mesh(
     cylinder.metadata["length"] = length
     cylinder.metadata["radius"] = radius
     cylinder.metadata["volume_theoretical"] = np.pi * radius**2 * length
-    cylinder.metadata["surface_area_theoretical"] = 2 * np.pi * radius * (radius + length)
+    cylinder.metadata["surface_area_theoretical"] = (
+        2 * np.pi * radius * (radius + length)
+    )
     cylinder.metadata["center"] = center
     cylinder.metadata["axis"] = axis
 
@@ -131,7 +137,7 @@ def _clean_exterior_mesh(combined_mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """
     try:
         # Remove duplicate faces (this helps with overlapping geometry)
-        combined_mesh.remove_duplicate_faces()
+        combined_mesh.update_faces(combined_mesh.unique_faces())
 
         # Remove unreferenced vertices
         combined_mesh.remove_unreferenced_vertices()
@@ -174,17 +180,23 @@ def create_branching_mesh(
         Trimesh object with branching structure
     """
     # Create main trunk along z-axis
-    trunk = trimesh.creation.cylinder(radius=trunk_radius, height=trunk_length, sections=resolution)
+    trunk = trimesh.creation.cylinder(
+        radius=trunk_radius, height=trunk_length, sections=resolution
+    )
 
     # Position trunk so top is at z=trunk_length
-    trunk_translation = trimesh.transformations.translation_matrix([0, 0, trunk_length / 2])
+    trunk_translation = trimesh.transformations.translation_matrix(
+        [0, 0, trunk_length / 2]
+    )
     trunk.apply_transform(trunk_translation)
 
     # Create branches
     branches = []
     for i in range(num_branches):
         # Create branch cylinder (initially centered at origin along z-axis)
-        branch = trimesh.creation.cylinder(radius=branch_radius, height=branch_length, sections=max(8, resolution // 2))
+        branch = trimesh.creation.cylinder(
+            radius=branch_radius, height=branch_length, sections=max(8, resolution // 2)
+        )
 
         # Calculate branch angle in radians
         angle_rad = np.radians(branch_angle)
@@ -200,7 +212,9 @@ def create_branching_mesh(
 
         # Step 2: Calculate where the bottom of the rotated branch is now
         # The original bottom was at [0, 0, -branch_length/2]
-        original_bottom = np.array([0, 0, -branch_length / 2, 1])  # homogeneous coordinates
+        original_bottom = np.array(
+            [0, 0, -branch_length / 2, 1]
+        )  # homogeneous coordinates
         rotated_bottom = rotation @ original_bottom
 
         # Step 3: Translate so the bottom of the branch is at trunk top
@@ -210,7 +224,9 @@ def create_branching_mesh(
         translation = trimesh.transformations.translation_matrix(translation_vector)
         branch.apply_transform(translation)
 
-        branches.append(branch)  # Combine using boolean union operations for clean exterior surface
+        branches.append(
+            branch
+        )  # Combine using boolean union operations for clean exterior surface
     all_meshes = [trunk] + branches
 
     try:
@@ -284,7 +300,12 @@ def save_demo_meshes(output_dir: str = "data/mesh") -> Dict[str, str]:
     # Create Y-branching mesh
     print("  Creating Y-branching mesh...")
     y_branch = create_branching_mesh(
-        trunk_length=60.0, trunk_radius=5.0, branch_length=40.0, branch_radius=3.0, branch_angle=45.0, num_branches=2
+        trunk_length=60.0,
+        trunk_radius=5.0,
+        branch_length=40.0,
+        branch_radius=3.0,
+        branch_angle=45.0,
+        num_branches=2,
     )
     y_branch_path = os.path.join(output_dir, "y_branch.stl")
     y_branch.export(y_branch_path)
@@ -292,7 +313,12 @@ def save_demo_meshes(output_dir: str = "data/mesh") -> Dict[str, str]:
     # Create multi-branching mesh
     print("  Creating multi-branching mesh...")
     multi_branch = create_branching_mesh(
-        trunk_length=80.0, trunk_radius=6.0, branch_length=35.0, branch_radius=3.5, branch_angle=60.0, num_branches=4
+        trunk_length=80.0,
+        trunk_radius=6.0,
+        branch_length=35.0,
+        branch_radius=3.5,
+        branch_angle=60.0,
+        num_branches=4,
     )
     multi_branch_path = os.path.join(output_dir, "multi_branch.stl")
     multi_branch.export(multi_branch_path)
@@ -335,16 +361,22 @@ def create_demo_neuron_mesh(
     soma = trimesh.creation.icosphere(subdivisions=2, radius=soma_radius)
 
     # Create axon extending downward
-    axon = trimesh.creation.cylinder(radius=axon_radius, height=axon_length, sections=12)
+    axon = trimesh.creation.cylinder(
+        radius=axon_radius, height=axon_length, sections=12
+    )
 
     # Position axon extending down from soma
-    axon_translation = trimesh.transformations.translation_matrix([0, 0, -axon_length / 2])
+    axon_translation = trimesh.transformations.translation_matrix(
+        [0, 0, -axon_length / 2]
+    )
     axon.apply_transform(axon_translation)
 
     # Create dendrites extending upward
     dendrites = []
     for i in range(num_dendrites):
-        dendrite = trimesh.creation.cylinder(radius=dendrite_radius, height=dendrite_length, sections=8)
+        dendrite = trimesh.creation.cylinder(
+            radius=dendrite_radius, height=dendrite_length, sections=8
+        )
 
         # Calculate rotation for this dendrite
         azimuth_angle = (2 * np.pi * i) / num_dendrites
@@ -358,13 +390,19 @@ def create_demo_neuron_mesh(
 
         # Step 2: Calculate where the bottom of the rotated dendrite is now
         # The original bottom was at [0, 0, -dendrite_length/2]
-        original_bottom = np.array([0, 0, -dendrite_length / 2, 1])  # homogeneous coordinates
+        original_bottom = np.array(
+            [0, 0, -dendrite_length / 2, 1]
+        )  # homogeneous coordinates
         rotated_bottom = rotation @ original_bottom
 
         # Step 3: Translate so the bottom of the dendrite is at soma surface
         # We want rotated_bottom to be at soma surface in the direction of the dendrite
         dendrite_direction = np.array(
-            [np.sin(tilt_angle) * np.cos(azimuth_angle), np.sin(tilt_angle) * np.sin(azimuth_angle), np.cos(tilt_angle)]
+            [
+                np.sin(tilt_angle) * np.cos(azimuth_angle),
+                np.sin(tilt_angle) * np.sin(azimuth_angle),
+                np.cos(tilt_angle),
+            ]
         )
         target_bottom = (
             dendrite_direction * soma_radius * 0.8
@@ -379,7 +417,7 @@ def create_demo_neuron_mesh(
     for i, component in enumerate([soma, axon] + dendrites):
         if not component.is_watertight:
             component.fill_holes()
-    
+
     # Combine using boolean union operations for clean exterior surface
     try:
         # Start with soma and progressively add components

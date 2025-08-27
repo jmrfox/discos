@@ -290,7 +290,11 @@ def test_dataclasses_construction_and_fields():
         center_line=np.vstack([np.zeros(3), np.ones(3)]),
     )
     assert seg.u_id == "u" and seg.v_id == "v"
-    assert np.isclose(seg.length, 10.0) and np.isclose(seg.r1, 1.0) and np.isclose(seg.r2, 2.0)
+    assert (
+        np.isclose(seg.length, 10.0)
+        and np.isclose(seg.r1, 1.0)
+        and np.isclose(seg.r2, 2.0)
+    )
     assert np.isclose(seg.volume, 20.0)
     assert seg.center_line.shape == (2, 3)
 
@@ -303,7 +307,9 @@ def test_skeletongraph_from_mesh_node_and_edge_attrs(cylinder_mesh):
         assert "radius" in attrs and isinstance(attrs["radius"], float)
         assert "z" in attrs and isinstance(attrs["z"], float)
         assert "slice_index" in attrs and isinstance(attrs["slice_index"], int)
-        assert "index_within_slice" in attrs and isinstance(attrs["index_within_slice"], int)
+        assert "index_within_slice" in attrs and isinstance(
+            attrs["index_within_slice"], int
+        )
         assert "area" in attrs and isinstance(attrs["area"], float)
     # Edge attributes present and typed
     for _, _, data in G.edges(data=True):

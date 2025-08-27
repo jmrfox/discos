@@ -1091,3 +1091,91 @@ class MeshManager:
         )
 
         return fig
+
+    def slice_mesh_by_z(
+        self,
+        z: float,
+        cap: bool = True,
+        validate: bool = True,
+    ) -> Tuple[Optional[trimesh.Trimesh], Optional[trimesh.Trimesh]]:
+        """
+        Slice the current mesh with the horizontal plane z = value and return
+        two new meshes partitioned along that plane.
+
+        This creates new vertices where the plane intersects the original mesh
+        and (optionally) caps the cut so both results are closed.
+
+        Args:
+            z: Z-value of the slicing plane (plane origin [0, 0, z], normal [0, 0, 1]).
+            cap: If True, seal the open cut by adding faces.
+            validate: If True, run trimesh processing/validation on the results.
+
+        Returns:
+            (below_mesh, above_mesh):
+                below_mesh contains the portion with vertices at z <= value.
+                above_mesh contains the portion with vertices at z >= value.
+                Either may be None if the plane lies completely outside the mesh.
+        """
+        if self.mesh is None:
+            raise ValueError("No mesh loaded")
+
+        plane_origin = np.array([0.0, 0.0, float(z)])
+        plane_normal = np.array([0.0, 0.0, 1.0])
+
+        below_mesh: Optional[trimesh.Trimesh]
+        above_mesh: Optional[trimesh.Trimesh]
+
+        # Positive side (normal pointing +Z) yields z >= z_plane -> above
+        try:
+            above_mesh = trimesh.intersections.slice_mesh_plane(
+                self.mesh, plane_normal=plane_normal, plane_origin=plane_origin, cap=cap
+            )
+        except Exception:
+            above_mesh = None
+
+        # Reverse normal yields z <= z_plane -> below
+        try:
+            below_mesh = trimesh.intersections.slice_mesh_plane(
+                self.mesh,
+                plane_normal=-plane_normal,
+                plane_origin=plane_origin,
+                cap=cap,
+            )
+        except Exception:
+            below_mesh = None
+
+        # Normalize empty results to None
+        if isinstance(above_mesh, trimesh.Trimesh) and (
+            len(above_mesh.faces) == 0 or len(above_mesh.vertices) == 0
+        ):
+            above_mesh = None
+        if isinstance(below_mesh, trimesh.Trimesh) and (
+            len(below_mesh.faces) == 0 or len(below_mesh.vertices) == 0
+        ):
+            below_mesh = None
+
+        # Optionally validate/process
+        if validate:
+            if isinstance(above_mesh, trimesh.Trimesh):
+                try:
+                    above_mesh.process(validate=True)
+                except Exception:
+                    pass
+            if isinstance(below_mesh, trimesh.Trimesh):
+                try:
+                    below_mesh.process(validate=True)
+                except Exception:
+                    pass
+
+        # Attach metadata
+        if isinstance(above_mesh, trimesh.Trimesh):
+            if not hasattr(above_mesh, "metadata") or above_mesh.metadata is None:
+                above_mesh.metadata = {}
+            above_mesh.metadata.update({"sliced_by_z": float(z), "side": "above"})
+
+        if isinstance(below_mesh, trimesh.Trimesh):
+            if not hasattr(below_mesh, "metadata") or below_mesh.metadata is None:
+                below_mesh.metadata = {}
+            below_mesh.metadata.update({"sliced_by_z": float(z), "side": "below"})
+
+        return below_mesh, above_mesh
