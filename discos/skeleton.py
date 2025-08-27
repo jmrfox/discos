@@ -71,9 +71,12 @@ EXAMPLE 1:
 
 """
 
+import math
+import warnings
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import shapely.geometry as sgeom
@@ -184,6 +187,279 @@ class SkeletonGraph:
 
     def to_networkx(self) -> nx.Graph:
         return self.G
+
+    # visualization
+    def draw(
+        self,
+        axis: str = "x",
+        ax: Any = None,
+        figsize: Optional[Tuple[float, float]] = None,
+        with_labels: bool = False,
+        node_size: int = 50,
+        node_color: str = "C0",
+        edge_color: str = "0.6",
+        min_hv_ratio: float = 0.3,
+        pad_frac: float = 0.05,
+        **kwargs: Any,
+    ) -> Any:
+        """Draw the skeleton graph in 2D using (x,z) or (y,z) coordinates.
+
+        Args:
+            axis: Horizontal axis to use ("x" or "y"). Vertical axis is always z.
+            ax: Optional matplotlib Axes to draw into. If None, a new figure/axes is created.
+            figsize: Optional (width, height) in inches when creating a new figure.
+            with_labels: Whether to render node labels.
+            node_size: Node marker size passed to networkx.draw.
+            node_color: Node color.
+            edge_color: Edge color.
+            min_hv_ratio: Minimum desired horizontal-to-vertical data range ratio.
+                If the horizontal data span is less than this ratio times the
+                vertical (z) span, x/y limits are expanded around the mean to
+                meet this minimum. Helps avoid an overly thin vertical line.
+            pad_frac: Fractional padding added to both axes limits for readability.
+            **kwargs: Additional kwargs forwarded to networkx.draw.
+
+        Returns:
+            The matplotlib Axes used for drawing.
+        """
+        axis = axis.lower()
+        if axis not in ("x", "y"):
+            raise ValueError("axis must be 'x' or 'y'")
+
+        # Build 2D positions from node 3D centers
+        idx = 0 if axis == "x" else 1
+        pos: Dict[Union[int, str], Tuple[float, float]] = {}
+        for n, attrs in self.G.nodes(data=True):
+            c = attrs.get("center")
+            if c is None or len(c) != 3:
+                continue
+            pos[n] = (float(c[idx]), float(c[2]))  # (x|y, z)
+
+        # Compute data bounds
+        if len(pos) == 0:
+            if ax is None:
+                fig, ax = plt.subplots(figsize=figsize)
+            ax.set_xlabel(f"{axis} (horizontal)")
+            ax.set_ylabel("z (vertical)")
+            return ax
+
+        xs = np.array([p[0] for p in pos.values()], dtype=float)
+        zs = np.array([p[1] for p in pos.values()], dtype=float)
+        xmin, xmax = float(xs.min()), float(xs.max())
+        zmin, zmax = float(zs.min()), float(zs.max())
+        xmid = 0.5 * (xmin + xmax)
+        zmid = 0.5 * (zmin + zmax)
+        xr = max(xmax - xmin, 1e-12)
+        zr = max(zmax - zmin, 1e-12)
+
+        # Enforce a minimum horizontal span relative to vertical span
+        min_xr = max(min_hv_ratio * zr, xr)
+        if min_xr > xr:
+            xmin = xmid - 0.5 * min_xr
+            xmax = xmid + 0.5 * min_xr
+            xr = min_xr
+
+        # Apply padding
+        xmin -= pad_frac * xr
+        xmax += pad_frac * xr
+        zmin -= pad_frac * zr
+        zmax += pad_frac * zr
+
+        # Prepare axes
+        if ax is None:
+            # Auto figsize that respects data aspect for clarity
+            if figsize is None:
+                # Base height and width with reasonable minimums
+                base_h = 4.0
+                # width scaled by data aspect (horizontal over vertical)
+                aspect = xr / zr if zr > 0 else 1.0
+                base_w = max(4.0, base_h * max(aspect, min_hv_ratio))
+                figsize = (base_w, base_h)
+            fig, ax = plt.subplots(figsize=figsize)
+
+        # Draw using networkx helper
+        nx.draw(
+            self.G,
+            pos=pos,
+            ax=ax,
+            with_labels=with_labels,
+            node_size=node_size,
+            node_color=node_color,
+            edge_color=edge_color,
+            **kwargs,
+        )
+
+        ax.set_xlabel(f"{axis} (horizontal)")
+        ax.set_ylabel("z (vertical)")
+        # Set limits and aspect for a clear, readable plot
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(zmin, zmax)
+        try:
+            ax.set_aspect("equal", adjustable="box")
+        except Exception:
+            # Fallback to auto if backend cannot honor equal aspect
+            ax.set_aspect("auto")
+
+        # Return provided or newly-created axes
+        return ax
+
+    def plot_cross_section(
+        self,
+        node_id: Union[int, str],
+        ax: Any = None,
+        boundary_color: str = "k",
+        circle_color: str = "C1",
+        center_color: str = "C2",
+        linewidth: float = 1.5,
+        alpha_boundary: float = 0.9,
+        alpha_circle: float = 0.8,
+        show_center: bool = True,
+        title: Optional[str] = None,
+    ) -> Any:
+        """Plot the cross-section boundary curve with its fitted disk.
+
+        Expects node attributes `boundary_2d`, `center`, and `radius`.
+
+        Args:
+            node_id: Graph node identifier (e.g., "cut3_cs0").
+            ax: Optional matplotlib Axes; if None, a new one is created.
+            boundary_color: Color for the boundary polyline.
+            circle_color: Color for the fitted circle.
+            center_color: Color for the center marker.
+            linewidth: Line width for boundary and circle.
+            alpha_boundary: Alpha for the boundary.
+            alpha_circle: Alpha for the circle.
+            show_center: Whether to draw the center point.
+            title: Optional title; defaults to node id with cut/index.
+
+        Returns:
+            The matplotlib Axes used for drawing.
+        """
+        if node_id not in self.G:
+            raise KeyError(f"Node '{node_id}' not in SkeletonGraph")
+
+        attrs = self.G.nodes[node_id]
+        boundary_2d = attrs.get("boundary_2d")
+        center = attrs.get("center")
+        radius = attrs.get("radius")
+
+        if boundary_2d is None or len(boundary_2d) < 2:
+            warnings.warn(f"Node '{node_id}' has no boundary_2d; cannot plot boundary.")
+        if center is None or radius is None:
+            raise ValueError(
+                f"Node '{node_id}' missing center/radius required for plotting"
+            )
+
+        # Prepare axes
+        if ax is None:
+            fig, ax = plt.subplots()
+
+        # Plot boundary polyline
+        if boundary_2d is not None and len(boundary_2d) >= 2:
+            bx = boundary_2d[:, 0]
+            by = boundary_2d[:, 1]
+            ax.plot(bx, by, color=boundary_color, lw=linewidth, alpha=alpha_boundary)
+
+        # Plot fitted circle
+        cx, cy = float(center[0]), float(center[1])
+        r = float(radius)
+        theta = np.linspace(0.0, 2.0 * math.pi, 256)
+        ax.plot(
+            cx + r * np.cos(theta),
+            cy + r * np.sin(theta),
+            color=circle_color,
+            lw=linewidth,
+            alpha=alpha_circle,
+        )
+        if show_center:
+            ax.plot([cx], [cy], marker="o", color=center_color, ms=4)
+
+        # Cosmetics
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        default_title = title
+        if default_title is None:
+            ci = attrs.get("slice_index")
+            ii = attrs.get("cross_section_index")
+            default_title = f"{node_id} (slice {ci}, cs {ii})"
+        ax.set_title(default_title)
+
+        return ax
+
+    def plot_all_cross_sections(
+        self,
+        sort_by: Tuple[str, str] = ("slice_index", "cross_section_index"),
+        max_cols: int = 4,
+        figsize: Optional[Tuple[float, float]] = None,
+        share_axes: bool = False,
+        boundary_color: str = "k",
+        circle_color: str = "C1",
+    ) -> Any:
+        """Plot every cross-section boundary with its fitted disk in a grid.
+
+        Args:
+            sort_by: Tuple of node attribute names to sort nodes (primary, secondary).
+            max_cols: Max number of subplot columns.
+            figsize: Figure size; auto if None.
+            share_axes: Whether to share x/y among subplots.
+            boundary_color: Color for boundaries.
+            circle_color: Color for circles.
+
+        Returns:
+            The matplotlib Figure created.
+        """
+        # Gather nodes that have boundary_2d and required attributes
+        nodes = []
+        for nid, attrs in self.G.nodes(data=True):
+            if attrs.get("center") is None or attrs.get("radius") is None:
+                continue
+            nodes.append((nid, attrs))
+
+        # Sort nodes by provided attributes if present
+        def sort_key(item: Tuple[str, Dict[str, Any]]):
+            _, a = item
+            return tuple(a.get(k, 0) for k in sort_by)
+
+        nodes.sort(key=sort_key)
+        n = len(nodes)
+        if n == 0:
+            warnings.warn("No nodes available to plot")
+            return None
+
+        ncols = max(1, int(max_cols))
+        nrows = int(math.ceil(n / ncols))
+        if figsize is None:
+            figsize = (4 * ncols, 4 * nrows)
+        fig, axes = plt.subplots(
+            nrows,
+            ncols,
+            figsize=figsize,
+            squeeze=False,
+            sharex=share_axes,
+            sharey=share_axes,
+        )
+
+        for idx, (nid, _) in enumerate(nodes):
+            r = idx // ncols
+            c = idx % ncols
+            ax = axes[r][c]
+            self.plot_cross_section(
+                nid,
+                ax=ax,
+                boundary_color=boundary_color,
+                circle_color=circle_color,
+                show_center=True,
+            )
+
+        # Hide any unused subplots
+        for k in range(n, nrows * ncols):
+            r = k // ncols
+            c = k % ncols
+            axes[r][c].axis("off")
+
+        fig.tight_layout()
+        return fig
 
 
 # ============================================================================
@@ -328,11 +604,14 @@ def skeletonize(
                 skel=skel,
                 slice_index=band_index,
             )
+            # For the top band, the upper junctions live at slice_index = n_slices-1
+            # not n_slices. Clamp to avoid missing the terminal top junctions.
+            upper_slice_index = min(band_index + 1, n_slices - 1)
             upper_ids = _match_centroids_to_junctions(
                 centroids=upper_locals,
                 z_plane=z_high,
                 skel=skel,
-                slice_index=band_index + 1,
+                slice_index=upper_slice_index,
             )
 
             # Build a Segment and add edges
@@ -348,6 +627,21 @@ def skeletonize(
             )
             skel.add_segment_edges(seg)
             segment_id += 1
+
+    # -------------------- Attach boundary polylines to nodes -------------------
+    # After connectivity is established, store each cross-section polygon's
+    # 2D boundary as a node attribute `boundary_2d` for plotting functions.
+    for cs in skel.cross_sections:
+        if not cs.polygons or not cs.junction_ids:
+            continue
+        for poly, j_id in zip(cs.polygons, cs.junction_ids):
+            try:
+                coords = np.asarray(poly.exterior.coords, dtype=float)
+                if coords is not None and len(coords) >= 2 and coords.shape[1] >= 2:
+                    skel.G.nodes[j_id]["boundary_2d"] = coords[:, :2]
+            except Exception:
+                # If shapely polygon lacks exterior or any other issue, skip
+                continue
 
     # -------------------------- Volume conservation --------------------------
     if validate_volume:
