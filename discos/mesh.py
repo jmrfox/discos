@@ -2,10 +2,49 @@
 Main mesh class
 """
 
+import multiprocessing
+import traceback
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import trimesh
+
+
+def _pymeshfix_worker(
+    queue,
+    v: np.ndarray,
+    f: np.ndarray,
+    join_components: bool,
+    remove_small_components: bool,
+    verbose: bool,
+):
+    """Worker to run PyMeshFix in a separate process and return vertices/faces.
+
+    This isolates potential native crashes from bringing down the parent process.
+    """
+    try:
+        from pymeshfix import MeshFix  # type: ignore
+
+        mf = MeshFix(v, f)
+        try:
+            mf.repair(
+                verbose=verbose,
+                joincomp=bool(join_components),
+                remove_small_components=bool(remove_small_components),
+            )
+        except TypeError:
+            # Older signature without keywords
+            mf.repair()
+
+        v2 = np.asarray(getattr(mf, "v", None), dtype=np.float64)
+        f2 = np.asarray(getattr(mf, "f", None), dtype=np.int64)
+        if v2.size == 0 or f2.size == 0:
+            queue.put(("err", "PyMeshFix returned an empty mesh"))
+            return
+
+        queue.put(("ok", v2, f2))
+    except BaseException as e:  # Catch everything, including SystemExit
+        queue.put(("err", repr(e), traceback.format_exc()))
 
 
 class MeshManager:
@@ -586,6 +625,135 @@ class MeshManager:
 
         self.mesh = mesh
         return mesh
+
+    def repair_mesh_pymeshfix(
+        self,
+        join_components: bool = True,
+        remove_small_components: bool = False,
+        keep_largest_component: bool = True,
+        min_component_faces: int = 30,
+        verbose: bool = True,
+        safe: bool = False,
+        timeout: float = 120.0,
+    ) -> trimesh.Trimesh:
+        """Repair current mesh using PyMeshFix.
+
+        Args:
+            join_components: Merge nearby components during repair.
+            remove_small_components: Remove very small components (PyMeshFix behavior).
+            keep_largest_component: After repair, keep only the largest connected component.
+            min_component_faces: Minimum faces to consider a component when filtering.
+            verbose: Whether to print concise summary (unused here but kept for API symmetry).
+            safe: Run PyMeshFix in a separate process to avoid hard interpreter exits.
+            timeout: Seconds to wait for PyMeshFix before aborting.
+
+        Returns:
+            Repaired mesh (also assigned to `self.mesh`).
+        """
+        if self.mesh is None:
+            raise ValueError("No mesh loaded")
+
+        try:
+            from pymeshfix import MeshFix  # type: ignore
+        except Exception as e:
+            raise ImportError(
+                "pymeshfix is required for repair_mesh_pymeshfix; install with `uv pip install pymeshfix`."
+            ) from e
+
+        m = self.mesh
+        v = np.asarray(m.vertices, dtype=np.float64)
+        f = np.asarray(m.faces, dtype=np.int64)
+
+        # Run PyMeshFix either inline (unsafe) or in a separate process (safe)
+        if safe:
+            ctx = multiprocessing.get_context("spawn")
+            queue: multiprocessing.queues.Queue = ctx.Queue()
+            proc = ctx.Process(
+                target=_pymeshfix_worker,
+                args=(
+                    queue,
+                    v,
+                    f,
+                    bool(join_components),
+                    bool(remove_small_components),
+                    bool(verbose),
+                ),
+            )
+            proc.start()
+            proc.join(timeout)
+
+            if proc.is_alive():
+                # Timed out
+                proc.terminate()
+                proc.join()
+                raise RuntimeError(f"PyMeshFix timed out after {timeout} seconds")
+
+            # Retrieve results from queue
+            if not queue.empty():
+                msg = queue.get()
+            else:
+                # Likely a hard crash in the child
+                raise RuntimeError(
+                    f"PyMeshFix crashed (exit code {proc.exitcode}) with no result"
+                )
+
+            if not msg or msg[0] != "ok":
+                # msg could be ("err", error_str, traceback)
+                detail = (
+                    msg[1]
+                    if isinstance(msg, tuple) and len(msg) > 1
+                    else "unknown error"
+                )
+                raise RuntimeError(f"PyMeshFix failed: {detail}")
+
+            _, v2, f2 = msg
+        else:
+            mf = MeshFix(v, f)
+            try:
+                mf.repair(
+                    verbose=verbose,
+                    joincomp=bool(join_components),
+                    remove_small_components=bool(remove_small_components),
+                )
+            except TypeError:
+                # Older signature without keywords
+                mf.repair()
+
+            v2 = np.asarray(getattr(mf, "v", None), dtype=np.float64)
+            f2 = np.asarray(getattr(mf, "f", None), dtype=np.int64)
+            if v2.size == 0 or f2.size == 0:
+                raise ValueError("PyMeshFix returned an empty mesh")
+
+        repaired = trimesh.Trimesh(vertices=v2, faces=f2, process=True)
+        # Post-process: fix normals, validate
+        try:
+            if not repaired.is_winding_consistent:
+                repaired.fix_normals()
+            repaired.process(validate=True)
+        except Exception:
+            pass
+
+        # Optionally keep largest component
+        if keep_largest_component:
+            try:
+                comps = repaired.split(only_watertight=False)
+                if len(comps) > 1:
+
+                    def comp_key(c: trimesh.Trimesh):
+                        vol = abs(float(getattr(c, "volume", 0.0)))
+                        return (vol, len(c.faces))
+
+                    comps_filtered = [
+                        c for c in comps if len(c.faces) >= int(min_component_faces)
+                    ]
+                    use = comps_filtered if comps_filtered else comps
+                    repaired = max(use, key=comp_key)
+                    repaired.process(validate=True)
+            except Exception:
+                pass
+
+        self.mesh = repaired
+        return repaired
 
     def visualize_mesh_3d(
         self,
