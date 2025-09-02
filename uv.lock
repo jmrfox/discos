@@ -982,6 +982,7 @@ dependencies = [
     { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pandas", version = "2.3.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "plotly" },
+    { name = "pymeshlab" },
     { name = "rtree", version = "1.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "rtree", version = "1.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "scipy", version = "1.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
@@ -1043,6 +1044,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.20.0" },
     { name = "pandas", specifier = ">=2.0.3" },
     { name = "plotly", specifier = ">=5.0.0" },
+    { name = "pymeshlab", specifier = ">=2025.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "rtree", specifier = ">=1.0.1" },
@@ -3500,6 +3502,37 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b0140bde72ea885a803b82086995367bf2037de0159d924/pygments-2.19.2.tar.gz", hash = "sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887", size = 4968631, upload-time = "2025-06-21T13:39:12.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
+]
+
+[[package]]
+name = "pymeshlab"
+version = "2025.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "1.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/7b/0a3e75d11f786a6a17695467e93b79aa64917094c9ab2cbbc6c7ea708bf8/pymeshlab-2025.7-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:6ecd5b5c4d5049d7658519ab9b35c42beb761e967c4accf6f038a23a85aa07b4", size = 73838252, upload-time = "2025-07-22T12:02:38.709Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/2a/f7819861f117a2e4cfa8e58c61a6d97222e0b487c2a1e9d7e0d0f34f9192/pymeshlab-2025.7-cp310-cp310-macosx_11_0_x86_64.whl", hash = "sha256:9d37f12aa1029f7b9592da30bbe6a4a523eebdc0ef4378ce2501f0e0e72390d7", size = 54866903, upload-time = "2025-07-22T12:02:43.521Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/23/5ff3c9419a89fdbd8a629fda4c14e623c57f47467ac5fd702c8b3cfb68f4/pymeshlab-2025.7-cp310-cp310-manylinux_2_35_aarch64.whl", hash = "sha256:2e08409e3f7cc26ed7f61fc75e18ae5f0995659c975a24bec7971358ccbf1ad0", size = 64644162, upload-time = "2025-07-22T12:02:46.827Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/f0/aa1a814551795722b865deac0514e993ed2ecacee450d5df4c471edebadd/pymeshlab-2025.7-cp310-cp310-win_amd64.whl", hash = "sha256:8cbe599f6d14dfdf6422ebc5b6a1a955d8c231224a4756df436e6ea0c6484512", size = 55150628, upload-time = "2025-07-22T12:33:05.093Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/a3/3da854a33c2845e56c21fb98d8c4d7586f037fe5bad135e9dcfa82dc2fcb/pymeshlab-2025.7-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:9181abea37b2877dd2f9a6f538b1f32dbad6628fc4b6953c1ff0e9dca8173823", size = 73839197, upload-time = "2025-07-22T12:33:14.663Z" },
+    { url = "https://files.pythonhosted.org/packages/90/f8/51c366d2ff0a6348d69162eecfe18bf9689c6a9e1be5b57c0bd55738dbaf/pymeshlab-2025.7-cp311-cp311-macosx_11_0_x86_64.whl", hash = "sha256:a6725ef70d3cfd20fd9ae1b16e48e39979494ca4702bdb2103fdff63aa800b38", size = 54867962, upload-time = "2025-07-22T12:33:23.453Z" },
+    { url = "https://files.pythonhosted.org/packages/03/9a/41100ba56adc6ac20421006c86ea785a08bfa60af69ecfb3bf7ab7bb93b4/pymeshlab-2025.7-cp311-cp311-manylinux_2_35_aarch64.whl", hash = "sha256:cf0d31b47b9da269f7e35c2d7d865e50b4a541688ab473856de3bbab923b091e", size = 64996203, upload-time = "2025-07-22T12:33:32.958Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/90/e9ca97335c03139a034d782be44aff94097fa845ad847bc8427e075ed319/pymeshlab-2025.7-cp311-cp311-win_amd64.whl", hash = "sha256:d2c9e65ad444eeeb99271e0cfb4bcf5631f7a8bcf6a36de5cb04071da63fadb2", size = 55151506, upload-time = "2025-07-22T12:33:42.137Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/34/4e55476f1494772e6c397204f5d48eeaeceb3ca9b774697566a568777acf/pymeshlab-2025.7-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:e989545ebbbe948da8497a389867ff58af7f9273d1731024b647ee85f9be36a7", size = 73839769, upload-time = "2025-07-22T12:33:52.234Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/ce/40e6cf11a4a11e3f899584b6e78c63bb6b3f4faea9fcb21b0d9667f389d5/pymeshlab-2025.7-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:ca1b0dead7de4cfa50e6466b7456b5f60da79bd1d611fdd74c489703d9f2db48", size = 54869524, upload-time = "2025-07-22T12:34:01.563Z" },
+    { url = "https://files.pythonhosted.org/packages/37/66/a29eb9d54595144a9b059c45ace63c44296195b9897f5030050a38167fad/pymeshlab-2025.7-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:7a107e07d7f0c2cd061a405d14d5a817dccbd4eb03b3313fe585c03cc9cec01f", size = 65248869, upload-time = "2025-07-22T12:34:12.3Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/70/afea7f74043ddc081d8f5f4120565f4e94c725bb0567023680c3182c2797/pymeshlab-2025.7-cp312-cp312-win_amd64.whl", hash = "sha256:ddaea3f02d5870d4b7039a87eb7b823a3a4c8bdc359a719298b081b103343c53", size = 55152452, upload-time = "2025-07-22T12:34:21.761Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/9a/db7cf61785c0519db8465f14ca9931c4cc9c5f77afc75c45a2600af49943/pymeshlab-2025.7-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:ecca34167cf578c55505ef7ed0c9c84ebe2625e5ae73553750f6b073f2e7aae4", size = 73840460, upload-time = "2025-07-22T12:34:32.47Z" },
+    { url = "https://files.pythonhosted.org/packages/82/18/1636ee1c14ad6ae1b41616c87db010a5d77820c18318d28d74d2b294cdcf/pymeshlab-2025.7-cp313-cp313-macosx_11_0_x86_64.whl", hash = "sha256:58a4883ef32de729b0bc56234b54acbc3ab214f5ae01ce543ca8244163b52cdc", size = 54869433, upload-time = "2025-07-22T12:34:42.479Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/e8/902ffa5f936f4d52dcaa22a946500b652be31adba79fefcb5eaad63041f5/pymeshlab-2025.7-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:1b5c8fdc17454fc660b5b4d269342413c51a628b7af4f432137a625eaadea983", size = 65146711, upload-time = "2025-07-22T12:34:54.5Z" },
+    { url = "https://files.pythonhosted.org/packages/83/1b/32ad9c46245510d4271dbc4b56250559fe7773461f4bca87b1844ecf2a27/pymeshlab-2025.7-cp313-cp313-win_amd64.whl", hash = "sha256:9f24d181343b48174d221b5329b187f1425f481130c7f56fa542b2da54087cae", size = 55152437, upload-time = "2025-07-22T12:39:50.795Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/b8/80469e1e16bc8dd9056a5871520176f8332dc9fa91ae36911c52133fca37/pymeshlab-2025.7-cp39-cp39-macosx_11_0_x86_64.whl", hash = "sha256:fc539a3e1a35a3a015aa3145f962eb05eae39b41625b83905cee6a3605a7856c", size = 54867036, upload-time = "2025-07-22T12:39:58.752Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/9b/8d5ab65eea3cf61fdea577253cd8e16148a83010d14b723e1285e9d778ad/pymeshlab-2025.7-cp39-cp39-manylinux_2_35_aarch64.whl", hash = "sha256:e0b38873fa9628ede1bbc3d54daaadb5b56b44d4ffb9ea8d566091952f8a6f85", size = 64586823, upload-time = "2025-07-22T12:40:06.941Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/22/05c92d8fff1c01200357696bb3915033f33affa724c78546df3ae53573ec/pymeshlab-2025.7-cp39-cp39-win_amd64.whl", hash = "sha256:7795db73ae2b97fffb923313096dc555a1cb3d130b11db143412c38fc4776106", size = 55150169, upload-time = "2025-07-22T12:40:15.194Z" },
 ]
 
 [[package]]

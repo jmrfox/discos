@@ -36,6 +36,7 @@ dependencies = [
     "ipykernel>=6.29.5",
     "nbformat>=5.10.4",
     "pandas>=2.0.3",
+    "pymeshlab>=2025.7",
 ]
 dynamic = ["version"]
 

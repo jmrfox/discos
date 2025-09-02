@@ -594,6 +594,8 @@ class MeshManager:
         backend: str = "auto",
         show_axes: bool = True,
         show_wireframe: bool = False,
+        width: int = 800,
+        height: int = 600,
     ) -> Optional[object]:
         """
         Create a 3D visualization of a mesh.
@@ -623,7 +625,9 @@ class MeshManager:
                     backend = "plotly"
 
         if backend == "plotly":
-            return self._visualize_mesh_plotly(title, color, show_axes, show_wireframe)
+            return self._visualize_mesh_plotly(
+                title, color, show_axes, show_wireframe, width, height
+            )
         elif backend == "matplotlib":
             return self._visualize_mesh_matplotlib(
                 title, color, show_axes, show_wireframe
@@ -631,7 +635,9 @@ class MeshManager:
         else:
             raise ValueError(f"Unknown backend: {backend}")
 
-    def _visualize_mesh_plotly(self, title, color, show_axes, show_wireframe):
+    def _visualize_mesh_plotly(
+        self, title, color, show_axes, show_wireframe, width=800, height=600
+    ):
         """Plotly-based mesh visualization."""
         try:
             import plotly.graph_objects as go
@@ -690,6 +696,9 @@ class MeshManager:
             # Configure layout
             fig.update_layout(
                 title=title,
+                autosize=False,
+                width=width,
+                height=height,
                 scene=dict(
                     aspectmode="data",
                     xaxis=dict(visible=show_axes),
