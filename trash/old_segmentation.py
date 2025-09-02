@@ -9,15 +9,16 @@ This module implements a robust mesh segmentation algorithm that:
 4. Validates volume and surface area conservation
 """
 
+import json
+import math
+import warnings
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import networkx as nx
 import numpy as np
 import trimesh
-import networkx as nx
-from typing import List, Dict, Tuple, Optional, Any, Union
-from dataclasses import dataclass
-import warnings
-import math
-import json
-from collections import deque
 from scipy.optimize import minimize
 
 
@@ -747,8 +748,8 @@ class SegmentGraph(nx.Graph):
             Figure object
         """
         try:
-            import matplotlib.pyplot as plt
             import matplotlib.cm as cm
+            import matplotlib.pyplot as plt
             import numpy as np
 
             # Create figure
@@ -1569,8 +1570,8 @@ class MeshSegmenter:
             )
 
         try:
-            import matplotlib.pyplot as plt
             import matplotlib.patches as patches
+            import matplotlib.pyplot as plt
         except ImportError:
             print("Matplotlib not available for visualization")
             return None
