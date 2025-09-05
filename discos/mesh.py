@@ -131,6 +131,9 @@ class MeshManager:
         except Exception as e:
             raise ValueError(f"Failed to load mesh from {filepath}: {str(e)}")
 
+    def save(self, filepath, file_format="obj"):
+        self.mesh.export(filepath, file_type=file_format)
+
     def copy(self):
         return MeshManager(self.mesh.copy(), verbose=self.verbose)
 
@@ -272,6 +275,130 @@ class MeshManager:
             [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
         )
         return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
+
+    def _furthest_pair(self, points: np.ndarray) -> Tuple[int, int, np.ndarray]:
+        """Return indices (i,j) of a furthest-apart pair and the vector points[j]-points[i]."""
+        best_i = 0
+        best_j = 1 if points.shape[0] > 1 else 0
+        best_d2 = -1.0
+        n = points.shape[0]
+        for i in range(n - 1):
+            diffs = points[i + 1 :] - points[i]
+            if diffs.size == 0:
+                continue
+            d2 = np.einsum("ij,ij->i", diffs, diffs)
+            if d2.size == 0:
+                continue
+            j_rel = int(np.argmax(d2))
+            if d2[j_rel] > best_d2:
+                best_d2 = float(d2[j_rel])
+                best_i = i
+                best_j = i + 1 + j_rel
+        v = points[best_j] - points[best_i]
+        return best_i, best_j, v
+
+    def align_furthest_points_with_z(
+        self,
+        *,
+        prefer_positive_z: bool = True,
+        use_convex_hull: bool = True,
+    ) -> trimesh.Trimesh:
+        """
+        Orient the mesh so the vector between the two furthest-apart points
+        aligns with the +Z axis.
+
+        This computes a diameter of the point set (by default using the convex
+        hull vertices for efficiency), finds the pair of points with maximum
+        Euclidean distance, and rotates the mesh about its centroid so that
+        this vector is aligned with the positive z-axis.
+
+        Args:
+            prefer_positive_z: If True, align the diameter to +Z; otherwise the
+                orientation to Z is arbitrary up to a sign.
+            use_convex_hull: If True (default), compute the diameter over the
+                convex hull vertices. This is typically much smaller than the
+                full vertex set and yields the same diameter for convex sets.
+
+        Returns:
+            The rotated mesh (also stored in self.mesh).
+        """
+        if self.mesh is None:
+            raise ValueError("No mesh loaded")
+
+        # Select candidate points
+        try:
+            points = (
+                self.mesh.convex_hull.vertices
+                if use_convex_hull and hasattr(self.mesh, "convex_hull")
+                else self.mesh.vertices
+            )
+        except Exception:
+            points = self.mesh.vertices
+
+        points = np.asarray(points, dtype=float)
+        if points.shape[0] < 2:
+            # Nothing to do
+            return self.mesh
+
+        # Find furthest pair using a vectorized per-anchor pass (O(n^2) time, O(n) mem)
+        best_i = 0
+        best_j = 1
+        best_d2 = -1.0
+        n = points.shape[0]
+        for i in range(n - 1):
+            diffs = points[i + 1 :] - points[i]
+            if diffs.size == 0:
+                continue
+            d2 = np.einsum("ij,ij->i", diffs, diffs)
+            j_rel = int(np.argmax(d2))
+            if d2[j_rel] > best_d2:
+                best_d2 = float(d2[j_rel])
+                best_i = i
+                best_j = i + 1 + j_rel
+
+        p1 = points[best_i]
+        p2 = points[best_j]
+        v = p2 - p1
+        norm = float(np.linalg.norm(v))
+        if not np.isfinite(norm) or norm <= 1e-12:
+            # Degenerate case; nothing to rotate
+            return self.mesh
+
+        if prefer_positive_z and v[2] < 0:
+            v = -v
+
+        # Compute rotation from v to +Z
+        target = np.array([0.0, 0.0, 1.0], dtype=float)
+        R = self._rotation_matrix_between_vectors(v, target)
+
+        # Rotate about centroid to preserve position
+        centroid = self.mesh.centroid
+        vc = self.mesh.vertices - centroid
+        self.mesh.vertices = (R @ vc.T).T + centroid
+        self.bounds = self._compute_bounds()
+
+        # Post-rotation correction: compute the furthest pair on the rotated
+        # vertices and ensure that vector is aligned with +Z as well. This
+        # guards against cases where the exact furthest pair differs slightly
+        # from the one chosen for the initial rotation.
+        try:
+            all_pts = np.asarray(self.mesh.vertices, dtype=float)
+            if all_pts.shape[0] >= 2:
+                _, _, v2 = self._furthest_pair(all_pts)
+                if prefer_positive_z and v2[2] < 0:
+                    v2 = -v2
+                v2n = v2 / (np.linalg.norm(v2) + 1e-12)
+                if v2n[2] < 0.999:
+                    R2 = self._rotation_matrix_between_vectors(v2, target)
+                    vc2 = self.mesh.vertices - centroid
+                    self.mesh.vertices = (R2 @ vc2.T).T + centroid
+                    self.bounds = self._compute_bounds()
+        except Exception:
+            # If anything goes wrong, we keep the initial rotation which already
+            # aligns the chosen diameter to +Z.
+            pass
+
+        return self.mesh
 
     # combining the functions from utils into this class
 

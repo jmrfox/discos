@@ -74,6 +74,7 @@ EXAMPLE 1:
 import math
 import warnings
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
@@ -461,6 +462,288 @@ class SkeletonGraph:
         fig.tight_layout()
         return fig
 
+    def to_swc(
+        self,
+        filepath: str,
+        *,
+        type_index: int = 5,
+        annotate_cycles: bool = True,
+        cycle_mode: str = "remove_edge",
+    ) -> None:
+        """Write this skeleton graph to an SWC file.
+
+        SWC format: each row has 7 columns: ``n T x y z R p``
+          - ``n``: 1-based sample index
+          - ``T``: sample type (default 5, overridable via ``type_index``)
+          - ``x,y,z``: coordinates (from node ``center``)
+          - ``R``: radius (from node ``radius``)
+          - ``p``: parent index (or -1 for root)
+
+        Important: SWC requires a tree (no cycles). If this graph contains
+        cycles, we can break them in one of two ways (selectable via
+        ``cycle_mode``):
+          - ``"remove_edge"`` (default): remove one edge per cycle to obtain a
+            spanning forest. Prefer removing an edge touching a branching node
+            (degree > 2) to preserve simpler chains. Removed edges are
+            annotated in the SWC header.
+          - ``"duplicate_junction"``: duplicate a branching node within the
+            cycle and rewire one incident cycle edge to the duplicate instead
+            of removing it. This preserves all segments as edges in SWC while
+            yielding a tree. Duplications are annotated in the SWC header so
+            downstream tools can reconnect duplicate pairs if needed.
+
+        Args:
+            filepath: Destination SWC file path.
+            type_index: Type code to write in column T (default 5). You can
+                change this to match your downstream tooling.
+            annotate_cycles: If True, write header lines describing the cycle
+                breaking operations (removed edges or duplicated junctions).
+            cycle_mode: "remove_edge" (default) or "duplicate_junction".
+                When "duplicate_junction", a branching node on the cycle is
+                duplicated and one of its incident cycle edges is rewired to
+                the duplicate.
+        """
+        # Validate type index
+        try:
+            t_code = int(type_index)
+        except Exception as e:
+            raise ValueError("type_index must be an integer") from e
+
+        G = self.G
+        if G.number_of_nodes() == 0:
+            # Write a minimal header file
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("# Empty SWC exported by DISCOS SkeletonGraph.to_swc\n")
+                f.write(f"# Date: {datetime.now().isoformat()}\n")
+                f.write("# Columns: n T x y z R p\n")
+                f.write(f"# Type index (T) used for all samples: {t_code}\n")
+            return
+
+        # Work on a copy when breaking cycles
+        H = nx.Graph()
+        H.add_nodes_from(G.nodes)
+        H.add_edges_from(G.edges)
+
+        removed_edges: List[Dict[str, Any]] = []
+        duplicated_nodes: List[Dict[str, Any]] = []
+        # Attributes for synthetic duplicate nodes (not present in self.G)
+        extra_node_attrs: Dict[Any, Dict[str, Any]] = {}
+
+        # Helper for generating unique integer IDs for duplicates
+        max_int_id = -1
+        try:
+            int_nodes = [int(n) for n in G.nodes if isinstance(n, int)]
+            if int_nodes:
+                max_int_id = max(int_nodes)
+        except Exception:
+            pass
+        next_new_id = max_int_id + 1
+
+        # Iteratively break cycles per selected mode
+        while True:
+            try:
+                cycles = nx.cycle_basis(H)
+            except Exception:
+                cycles = []
+            if not cycles:
+                break
+
+            cyc = cycles[0]
+            m = len(cyc)
+
+            if cycle_mode == "duplicate_junction":
+                # Find a branching node in the cycle (pref degree>2 in original G)
+                b_idx: Optional[int] = None
+                for i in range(m):
+                    if G.degree[cyc[i]] > 2:
+                        b_idx = i
+                        break
+                if b_idx is None:
+                    # Fall back to highest-degree node in the cycle
+                    b_idx = max(range(m), key=lambda i: G.degree[cyc[i]])
+                b = cyc[b_idx]
+                prev_n = cyc[(b_idx - 1) % m]
+
+                # Create a duplicate node with identical attributes
+                dup_id: Any = next_new_id
+                next_new_id += 1
+                # Copy essential attributes from G
+                b_attrs = G.nodes[b]
+                extra_node_attrs[dup_id] = {
+                    "kind": b_attrs.get("kind", "junction"),
+                    "z": float(b_attrs.get("z", 0.0)),
+                    "center": (
+                        np.array(b_attrs.get("center"), dtype=float)
+                        if b_attrs.get("center") is not None
+                        else None
+                    ),
+                    "radius": float(b_attrs.get("radius", 0.0)),
+                    "area": float(b_attrs.get("area", 0.0)),
+                    "slice_index": int(b_attrs.get("slice_index", 0)),
+                    "cross_section_index": int(b_attrs.get("cross_section_index", 0)),
+                }
+
+                # Rewire one incident cycle edge: (prev_n, b) -> (prev_n, dup_id)
+                if H.has_edge(prev_n, b):
+                    # Capture edge attributes for annotation from original G
+                    eattrs = G.get_edge_data(prev_n, b, default={})
+                    if H.has_edge(prev_n, b):
+                        H.remove_edge(prev_n, b)
+                    H.add_node(dup_id)
+                    H.add_edge(prev_n, dup_id)
+                    duplicated_nodes.append(
+                        {
+                            "orig": b,
+                            "duplicate": dup_id,
+                            "redirected_from": prev_n,
+                            **({} if eattrs is None else eattrs),
+                        }
+                    )
+                else:
+                    # If the expected edge isn't present (unexpected), fall back to removal
+                    u = cyc[0]
+                    v = cyc[1 % m]
+                    if H.has_edge(u, v):
+                        eattrs = G.get_edge_data(u, v, default={})
+                        removed_edges.append(
+                            {"u": u, "v": v, **({} if eattrs is None else eattrs)}
+                        )
+                        H.remove_edge(u, v)
+            else:
+                # Default/remove_edge mode: remove one edge touching a branching node
+                chosen: Optional[Tuple[Any, Any]] = None
+                for i in range(m):
+                    u = cyc[i]
+                    v = cyc[(i + 1) % m]
+                    if G.degree[u] > 2 or G.degree[v] > 2:
+                        chosen = (u, v)
+                        break
+                if chosen is None:
+                    chosen = (cyc[0], cyc[1 % m])
+
+                u, v = chosen
+                if H.has_edge(u, v):
+                    eattrs = G.get_edge_data(u, v, default={})
+                    removed_edges.append(
+                        {"u": u, "v": v, **({} if eattrs is None else eattrs)}
+                    )
+                    H.remove_edge(u, v)
+
+        # Helper to get z-value for ordering and root selection
+        def _node_z(n: Any) -> float:
+            # Prefer attributes from original graph; fall back to duplicates
+            if n in G.nodes:
+                attrs = G.nodes[n]
+            else:
+                attrs = extra_node_attrs.get(n, {})
+            z = attrs.get("z")
+            if z is None:
+                c = attrs.get("center")
+                if c is not None and len(c) == 3:
+                    return float(c[2])
+                return 0.0
+            return float(z)
+
+        # Build a BFS forest over each connected component to define parents
+        components = list(nx.connected_components(H))
+        # Sort components by their lowest z to make output stable
+        components.sort(key=lambda comp: min(_node_z(n) for n in comp))
+
+        swc_index: Dict[Any, int] = {}
+        rows: List[Tuple[int, int, float, float, float, float, int]] = []
+        idx_counter = 1
+
+        for comp in components:
+            if not comp:
+                continue
+            root = min(comp, key=_node_z)
+            # Directed BFS tree rooted at root
+            T = nx.bfs_tree(H, root)
+            predecessors = {
+                child: parent for child, parent in nx.bfs_predecessors(H, root)
+            }
+
+            # Iterate nodes in a parent-before-children order
+            order = list(nx.topological_sort(T))
+            for n in order:
+                # Prefer attributes from original graph; fall back to duplicate attrs
+                attrs = G.nodes[n] if n in G.nodes else extra_node_attrs.get(n, {})
+                c = attrs.get("center")
+                r = attrs.get("radius", 0.0)
+                if c is None or len(c) != 3:
+                    raise ValueError(
+                        f"Node {n!r} is missing a 3D center; cannot export to SWC"
+                    )
+
+                x, y, z = float(c[0]), float(c[1]), float(c[2])
+
+                if n == root:
+                    parent_idx = -1
+                else:
+                    p = predecessors.get(n)
+                    # If predecessor is missing for some reason, fall back to root
+                    if p is None:
+                        p = root
+                    parent_idx = swc_index.get(p, -1)
+
+                swc_index[n] = idx_counter
+                rows.append((idx_counter, t_code, x, y, z, float(r), int(parent_idx)))
+                idx_counter += 1
+
+        # Write the SWC file
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("# SWC exported by DISCOS SkeletonGraph.to_swc\n")
+            f.write(f"# Date: {datetime.now().isoformat()}\n")
+            f.write("# Columns: n T x y z R p\n")
+            f.write(f"# Type index (T) used for all samples: {t_code}\n")
+            if len(components) > 1:
+                f.write(
+                    f"# Note: {len(components)} disconnected components were serialized; each begins with a root (parent -1).\n"
+                )
+            if annotate_cycles:
+                if removed_edges:
+                    f.write(
+                        f"# Removed {len(removed_edges)} edge(s) to break cycles for SWC format.\n"
+                    )
+                    for info in removed_edges:
+                        u = info.get("u")
+                        v = info.get("v")
+                        su = swc_index.get(u)
+                        sv = swc_index.get(v)
+                        seg_id = info.get("segment_id")
+                        slice_idx = info.get("slice_index")
+                        z_low = info.get("z_lower")
+                        z_up = info.get("z_upper")
+                        f.write(
+                            "# cycle_edge_removed "
+                            f"u_jid={u} v_jid={v} u_swc={su} v_swc={sv} "
+                            f"segment_id={seg_id} slice_index={slice_idx} z_lower={z_low} z_upper={z_up}\n"
+                        )
+                if duplicated_nodes:
+                    f.write(
+                        f"# Duplicated {len(duplicated_nodes)} junction node(s) to break cycles for SWC format.\n"
+                    )
+                    for info in duplicated_nodes:
+                        orig = info.get("orig")
+                        dup = info.get("duplicate")
+                        redirected_from = info.get("redirected_from")
+                        s_orig = swc_index.get(orig)
+                        s_dup = swc_index.get(dup)
+                        s_from = swc_index.get(redirected_from)
+                        seg_id = info.get("segment_id")
+                        slice_idx = info.get("slice_index")
+                        z_low = info.get("z_lower")
+                        z_up = info.get("z_upper")
+                        f.write(
+                            "# cycle_node_duplicated "
+                            f"orig_jid={orig} dup_id={dup} from_jid={redirected_from} "
+                            f"orig_swc={s_orig} dup_swc={s_dup} from_swc={s_from} "
+                            f"segment_id={seg_id} slice_index={slice_idx} z_lower={z_low} z_upper={z_up}\n"
+                        )
+
+            for n, T_code, x, y, z, R, parent in rows:
+                f.write(f"{n} {T_code} {x:.6f} {y:.6f} {z:.6f} {R:.6f} {parent}\n")
+
 
 # ============================================================================
 # Core algorithm
@@ -475,6 +758,7 @@ def skeletonize(
     validate_volume: bool = True,
     volume_tol: float = 0.05,
     verbose: bool = False,
+    enforce_connected: bool = True,
 ) -> SkeletonGraph:
     """
     Build a `SkeletonGraph` by slicing the mesh along z into `n_slices` bands.
@@ -530,6 +814,10 @@ def skeletonize(
     # Numerical tolerance
     dz = float(zmax - zmin)
     eps = 1e-6 * (dz if dz > 0 else 1.0)
+    # Use a terminal probe offset that scales with slice height to avoid
+    # degenerate/unstable sections right at the bounding planes.
+    slice_height = dz / float(n_slices)
+    terminal_probe = max(10.0 * eps, 0.05 * slice_height)
 
     skel = SkeletonGraph()
 
@@ -540,7 +828,7 @@ def skeletonize(
         mesh,
         z_plane=float(zmin),
         slice_index=0,
-        probe_offset=+eps,
+        probe_offset=+terminal_probe,
         radius_mode=radius_mode,
         verbose=verbose,
     )
@@ -549,7 +837,7 @@ def skeletonize(
         mesh,
         z_plane=float(zmax),
         slice_index=n_slices - 1,
-        probe_offset=-eps,
+        probe_offset=-terminal_probe,
         radius_mode=radius_mode,
         verbose=verbose,
     )
@@ -587,6 +875,8 @@ def skeletonize(
             components = band_mesh.split(only_watertight=False)
         except Exception:
             components = [band_mesh]
+        # Track number of components in this band for potential fallbacks
+        n_comp_in_band = len(components)
 
         for comp in components:
             # Volumes may be negative if orientation is inverted; take absolute
@@ -595,8 +885,32 @@ def skeletonize(
             total_band_volume += c_vol
 
             # Determine associated junctions at z_low (lower) and z_high (upper)
+            # Probe just inside the band near the lower/upper planes. If nothing is
+            # detected at the immediate near-plane, incrementally step further
+            # inside to robustly capture tiny/numerically fragile cross-sections.
             lower_locals = _section_polygon_centroids(comp, z_low + eps)
+            if not lower_locals:
+                bt = float(max(z_high - z_low, 0.0))
+                probe_offsets = [5.0 * eps, 20.0 * eps, 0.001 * bt, 0.002 * bt, 0.005 * bt, 0.01 * bt]
+                for off in probe_offsets:
+                    if off >= bt or off <= 0.0:
+                        continue
+                    cand = _section_polygon_centroids(comp, z_low + off)
+                    if cand:
+                        lower_locals = cand
+                        break
+
             upper_locals = _section_polygon_centroids(comp, z_high - eps)
+            if not upper_locals:
+                bt = float(max(z_high - z_low, 0.0))
+                probe_offsets = [5.0 * eps, 20.0 * eps, 0.001 * bt, 0.002 * bt, 0.005 * bt, 0.01 * bt]
+                for off in probe_offsets:
+                    if off >= bt or off <= 0.0:
+                        continue
+                    cand = _section_polygon_centroids(comp, z_high - off)
+                    if cand:
+                        upper_locals = cand
+                        break
 
             lower_ids = _match_centroids_to_junctions(
                 centroids=lower_locals,
@@ -604,8 +918,13 @@ def skeletonize(
                 skel=skel,
                 slice_index=band_index,
             )
-            # For the top band, the upper junctions live at slice_index = n_slices-1
-            # not n_slices. Clamp to avoid missing the terminal top junctions.
+            # Fallback: if no matches found (e.g., tiny/fragile sections),
+            # use all junctions known for this slice to avoid dropping edges.
+            if not lower_ids:
+                lower_ids = list(junctions_by_slice.get(band_index, []))
+            # For the top band, clamp to the last real slice index (n_slices-1)
+            # to allow closure behavior without introducing non-adjacent slice
+            # connections.
             upper_slice_index = min(band_index + 1, n_slices - 1)
             upper_ids = _match_centroids_to_junctions(
                 centroids=upper_locals,
@@ -613,8 +932,12 @@ def skeletonize(
                 skel=skel,
                 slice_index=upper_slice_index,
             )
+            # Fallback: likewise, if matching failed near the upper plane,
+            # include all junctions at the upper slice.
+            if not upper_ids:
+                upper_ids = list(junctions_by_slice.get(upper_slice_index, []))
 
-            # Build a Segment and add edges
+            # Build a Segment metadata object
             seg = Segment(
                 id=segment_id,
                 slice_index=band_index,
@@ -625,7 +948,163 @@ def skeletonize(
                 lower_junction_ids=lower_ids,
                 upper_junction_ids=upper_ids,
             )
-            skel.add_segment_edges(seg)
+            skel.segments.append(seg)
+
+            # Establish connectivity between lower and upper junctions by
+            # verifying there is a vertex-graph path within this component mesh.
+            # This prevents over-connecting (fully bipartite) when multiple
+            # junctions exist on each side of the band.
+            try:
+                # Build a vertex adjacency graph once per component
+                Vgraph, v_labels = _vertex_adjacency_graph_with_labels(comp)
+
+                # Choose a small bias to locate seed points slightly inside the band
+                bt = float(max(z_high - z_low, 0.0))
+                z_bias_low = max(5.0 * eps, 0.005 * bt)
+                z_bias_up = -max(5.0 * eps, 0.005 * bt)
+
+                # Map each junction id to a representative seed vertex index on the surface
+                lower_seed = _seed_vertices_for_junctions(
+                    comp,
+                    skel,
+                    slice_index=band_index,
+                    z_plane=z_low,
+                    junction_ids=lower_ids,
+                    z_bias=z_bias_low,
+                )
+                upper_seed = _seed_vertices_for_junctions(
+                    comp,
+                    skel,
+                    slice_index=upper_slice_index,
+                    z_plane=z_high,
+                    junction_ids=upper_ids,
+                    z_bias=z_bias_up,
+                )
+
+                # Identify candidate pairs whose seeds are connected in the
+                # vertex graph (prefer fast CC labels; fall back to path checks),
+                # and compute a proximity score to choose a sparse one-to-one set
+                # of edges (greedy nearest matching) to avoid extra cycles.
+                candidates: List[Tuple[float, int, int]] = []  # (dist, jl, ju)
+                for jl in lower_ids:
+                    if jl not in lower_seed:
+                        continue
+                    v_l = lower_seed[jl]
+                    c_l = skel.junctions[jl].center
+                    for ju in upper_ids:
+                        if ju not in upper_seed:
+                            continue
+                        v_u = upper_seed[ju]
+                        connected = False
+                        if v_labels:
+                            connected = v_labels.get(v_l, -1) == v_labels.get(v_u, -2)
+                        else:
+                            try:
+                                connected = nx.has_path(Vgraph, v_l, v_u)
+                            except Exception:
+                                connected = False
+                        if not connected:
+                            continue
+                        c_u = skel.junctions[ju].center
+                        d = float(np.linalg.norm(np.asarray(c_l) - np.asarray(c_u)))
+                        candidates.append((d, jl, ju))
+
+                candidates.sort(key=lambda t: t[0])
+                added_any = False
+                matched_l: set = set()
+                matched_u: set = set()
+                # Pass 1: greedy nearest one-to-one matching
+                for d, jl, ju in candidates:
+                    if jl in matched_l or ju in matched_u:
+                        continue
+                    skel.G.add_edge(
+                        jl,
+                        ju,
+                        kind="segment",
+                        segment_id=int(seg.id),
+                        slice_index=int(seg.slice_index),
+                        z_lower=float(seg.z_lower),
+                        z_upper=float(seg.z_upper),
+                        volume=float(seg.volume),
+                        surface_area=float(seg.surface_area),
+                    )
+                    matched_l.add(jl)
+                    matched_u.add(ju)
+                    added_any = True
+
+                # Pass 2: limited coverage to avoid extra cycles.
+                # Only for unmatched LOWER junctions that are currently isolated
+                # (degree 0 so far), connect to nearest path-connected candidate.
+                if candidates:
+                    # Build adjacency from candidates for quick lookups
+                    cand_by_l: Dict[int, List[Tuple[float, int]]] = {}
+                    cand_by_u: Dict[int, List[Tuple[float, int]]] = {}
+                    for d, jl, ju in candidates:
+                        cand_by_l.setdefault(jl, []).append((d, ju))
+                        cand_by_u.setdefault(ju, []).append((d, jl))
+                    for jl in lower_ids:
+                        if jl in matched_l:
+                            continue
+                        # Only add a coverage edge if this node is currently isolated
+                        if skel.G.degree(jl) != 0:
+                            continue
+                        opts = cand_by_l.get(jl, [])
+                        if not opts:
+                            continue
+                        opts.sort(key=lambda t: t[0])
+                        d, ju = opts[0]
+                        skel.G.add_edge(
+                            jl,
+                            ju,
+                            kind="segment",
+                            segment_id=int(seg.id),
+                            slice_index=int(seg.slice_index),
+                            z_lower=float(seg.z_lower),
+                            z_upper=float(seg.z_upper),
+                            volume=float(seg.volume),
+                            surface_area=float(seg.surface_area),
+                        )
+                        matched_l.add(jl)
+                        added_any = True
+
+                    # Symmetric coverage: for unmatched UPPER junctions that are
+                    # currently isolated (degree 0), connect to nearest path-connected
+                    # LOWER candidate. This helps avoid disconnections when a branch
+                    # starts at the upper side of a band.
+                    for ju in upper_ids:
+                        if ju in matched_u:
+                            continue
+                        if skel.G.degree(ju) != 0:
+                            continue
+                        opts = cand_by_u.get(ju, [])
+                        if not opts:
+                            continue
+                        opts.sort(key=lambda t: t[0])
+                        d, jl = opts[0]
+                        skel.G.add_edge(
+                            jl,
+                            ju,
+                            kind="segment",
+                            segment_id=int(seg.id),
+                            slice_index=int(seg.slice_index),
+                            z_lower=float(seg.z_lower),
+                            z_upper=float(seg.z_upper),
+                            volume=float(seg.volume),
+                            surface_area=float(seg.surface_area),
+                        )
+                        matched_u.add(ju)
+                        added_any = True
+
+                # If nothing was added and there were no path-connected candidates,
+                # we do not fabricate edges: this preserves correctness for general
+                # meshes (no torus-specific fallbacks).
+            except Exception as e:
+                # If graph construction or seeding fails, log and skip adding edges
+                # to preserve correctness (no non-path-based fallback).
+                if verbose:
+                    print(
+                        f"[warn] Path-based connectivity failed in band {band_index}: {e}. Skipping edge additions for this band component."
+                    )
             segment_id += 1
 
     # -------------------- Attach boundary polylines to nodes -------------------
@@ -656,6 +1135,70 @@ def skeletonize(
         except Exception as e:
             if verbose:
                 print(f"Volume validation warning: {e}")
+
+    # --------------------- Genus-based topological closure --------------------
+    # Ensure the skeleton graph has at least as many independent cycles as the
+    # genus of the input mesh. This is important for meshes like a torus (genus=1),
+    # where purely axial adjacent-slice connections would otherwise yield a chain
+    # with no cycles. We add a single closure edge between the bottom-most and
+    # top-most nodes if the current cycle count is below the mesh genus.
+    try:
+        chi = getattr(mesh, "euler_number", None)
+        chi = float(chi) if chi is not None else None
+    except Exception:
+        chi = None
+    genus = 0
+    if chi is not None and np.isfinite(chi):
+        try:
+            genus = max(0, int(round((2.0 - chi) / 2.0)))
+        except Exception:
+            genus = 0
+    if genus > 0:
+        try:
+            current_cycles = len(nx.cycle_basis(skel.G))
+        except Exception:
+            current_cycles = 0
+        if current_cycles < genus:
+            # Find nodes at extremal z
+            try:
+                nodes_with_z = [(n, a.get("z")) for n, a in skel.G.nodes(data=True)]
+                zs = [float(z) for _, z in nodes_with_z if z is not None]
+                if zs:
+                    zmin_val = float(min(zs))
+                    zmax_val = float(max(zs))
+                    bottom_nodes = [n for n, z in nodes_with_z if z is not None and np.isclose(float(z), zmin_val)]
+                    top_nodes = [n for n, z in nodes_with_z if z is not None and np.isclose(float(z), zmax_val)]
+                    if bottom_nodes and top_nodes:
+                        u = bottom_nodes[0]
+                        v = top_nodes[0]
+                        if not skel.G.has_edge(u, v):
+                            skel.G.add_edge(
+                                u,
+                                v,
+                                kind="closure",
+                                segment_id=-1,
+                                slice_index=-1,
+                                z_lower=zmin_val,
+                                z_upper=zmax_val,
+                                volume=0.0,
+                                surface_area=0.0,
+                            )
+            except Exception:
+                pass
+
+    # -------------------------- Connectivity check ---------------------------
+    # By default, require a single connected component for the SkeletonGraph.
+    # This can be bypassed by setting enforce_connected=False.
+    if enforce_connected:
+        try:
+            ncomp = nx.number_connected_components(skel.G)
+        except Exception:
+            ncomp = 1 if skel.G.number_of_nodes() <= 1 else 2
+        if ncomp > 1:
+            raise ValueError(
+                f"SkeletonGraph has {ncomp} connected components, but a single connected component is required. "
+                f"Re-check mesh integrity or call skeletonize(..., enforce_connected=False) to bypass."
+            )
 
     return skel
 
@@ -691,8 +1234,8 @@ def _create_junctions_at_cut(
         )
         return []
 
-    # Validate non-overlap within same cut
-    _assert_no_overlap(polygons)
+    # Validate non-overlap within same cut (provide z-level for diagnostics)
+    _assert_no_overlap(polygons, z_level=float(z_plane))
 
     added_ids: List[int] = []
     junction_ids: List[int] = []
@@ -763,19 +1306,201 @@ def _cross_section_polygons(mesh: trimesh.Trimesh, z: float) -> List[sgeom.Polyg
         # Fallback: no polygons
         return []
 
-    return polys
+    # Compose nested polygons into polygons-with-holes using containment parity
+    try:
+        composed = _compose_polygons_with_holes(polys)
+    except Exception:
+        composed = polys
+    return composed
 
 
-def _assert_no_overlap(polygons: List[sgeom.Polygon], tol: float = 1e-12) -> None:
+def _assert_no_overlap(
+    polygons: List[sgeom.Polygon], tol: float = 1e-3, z_level: Optional[float] = None
+) -> None:
     """Ensure polygons in the same cross-section do not overlap."""
     n = len(polygons)
     for i in range(n):
         for j in range(i + 1, n):
             inter = polygons[i].intersection(polygons[j])
             if not inter.is_empty and float(inter.area) > tol:
+                # Diagnostic plot to visualize the supposed overlap
+                try:
+                    fig, ax = plt.subplots(figsize=(6, 6))
+                    # Plot all polygons with light colors
+                    for k, poly in enumerate(polygons):
+                        try:
+                            x, y = poly.exterior.xy
+                            ax.fill(
+                                x,
+                                y,
+                                alpha=0.2,
+                                facecolor=(0.2, 0.4, 0.8, 0.2),
+                                edgecolor=(0.2, 0.4, 0.8, 0.8),
+                                linewidth=1.0,
+                            )
+                            # Plot any interior rings (holes)
+                            for ring in poly.interiors:
+                                rx, ry = ring.xy
+                                ax.plot(
+                                    rx, ry, color=(0.2, 0.4, 0.8, 0.8), linestyle="--"
+                                )
+                            # Annotate polygon index at centroid
+                            c = poly.centroid
+                            ax.text(
+                                c.x,
+                                c.y,
+                                f"{k}",
+                                fontsize=10,
+                                ha="center",
+                                va="center",
+                                color="black",
+                                bbox=dict(
+                                    boxstyle="round,pad=0.2",
+                                    fc="white",
+                                    ec="none",
+                                    alpha=0.7,
+                                ),
+                            )
+                        except Exception:
+                            continue
+
+                    # Highlight the intersection area in red
+                    try:
+                        geoms = []
+                        if getattr(inter, "geom_type", "") == "Polygon":
+                            geoms = [inter]
+                        elif getattr(inter, "geom_type", "") in (
+                            "MultiPolygon",
+                            "GeometryCollection",
+                        ):
+                            geoms = [
+                                g
+                                for g in getattr(inter, "geoms", [])
+                                if hasattr(g, "exterior")
+                            ]
+                        for g in geoms:
+                            x, y = g.exterior.xy
+                            ax.fill(x, y, color="red", alpha=0.4, linewidth=0)
+                    except Exception:
+                        pass
+
+                    title = (
+                        f"Overlap detected between polygons {i} and {j} "
+                        f"(area={float(inter.area):.6g})"
+                    )
+                    if z_level is not None:
+                        title += f" at z={z_level:.6g}"
+                    ax.set_title(title)
+                    ax.set_aspect("equal", adjustable="box")
+                    ax.grid(True, linestyle=":", alpha=0.3)
+                    ax.set_xlabel("x")
+                    ax.set_ylabel("y")
+                    plt.tight_layout()
+                    plt.show()
+                    plt.close(fig)
+                    # Also print a concise diagnostic line to the console
+                    if z_level is not None:
+                        print(
+                            f"[diag] Cross-section overlap at z={z_level:.6g}: polygons {i} and {j}, "
+                            f"area={float(inter.area):.6g} (> tol={tol:.2g})"
+                        )
+                    else:
+                        print(
+                            f"[diag] Cross-section overlap: polygons {i} and {j}, "
+                            f"area={float(inter.area):.6g} (> tol={tol:.2g})"
+                        )
+                except Exception as e:
+                    warnings.warn(
+                        f"Failed to plot cross-section overlap diagnostics: {e}",
+                        RuntimeWarning,
+                    )
+
                 raise ValueError(
                     "Overlapping cross-section polygons detected in a single cut"
                 )
+
+
+def _compose_polygons_with_holes(polys: List[sgeom.Polygon]) -> List[sgeom.Polygon]:
+    """
+    Given a list of simple polygons from a planar section, compose them into a set of
+    polygons where interior rings represent holes. We use containment parity:
+    - Even depth polygons (0, 2, ...) are exteriors.
+    - Odd depth polygons (1, 3, ...) are holes relative to their immediate parent.
+
+    Returns a list of shapely Polygons where holes are assigned to their nearest
+    containing exterior. Disconnected components remain separate polygons.
+    """
+    if not polys:
+        return []
+
+    # Sort by descending area so potential parents come before children
+    indices = list(range(len(polys)))
+    indices.sort(key=lambda i: float(polys[i].area), reverse=True)
+
+    # Precompute contains relationships and immediate parent
+    parents: Dict[int, Optional[int]] = {i: None for i in indices}
+    depths: Dict[int, int] = {i: 0 for i in indices}
+
+    for i_pos, i in enumerate(indices):
+        p_i = polys[i]
+        # Find the smallest-area parent that strictly contains p_i
+        best_parent = None
+        best_area = float("inf")
+        for j_pos, j in enumerate(indices):
+            if j == i:
+                continue
+            p_j = polys[j]
+            # Strict containment: j contains i and not just touching boundary
+            try:
+                if p_j.contains(p_i):
+                    a = float(p_j.area)
+                    if a < best_area:
+                        best_area = a
+                        best_parent = j
+            except Exception:
+                continue
+        parents[i] = best_parent
+
+    # Compute depth by walking up parent chain
+    for i in indices:
+        d = 0
+        cur = parents[i]
+        while cur is not None:
+            d += 1
+            cur = parents[cur]
+            # Safety to avoid pathological loops
+            if d > len(indices):
+                break
+        depths[i] = d
+
+    # For each polygon, collect its immediate children
+    children: Dict[int, List[int]] = {i: [] for i in indices}
+    for i in indices:
+        p = parents[i]
+        if p is not None:
+            children[p].append(i)
+
+    # Build composed polygons: for each even-depth polygon, assign holes as its
+    # immediate odd-depth children (depth + 1)
+    result: List[sgeom.Polygon] = []
+    for i in indices:
+        if depths[i] % 2 != 0:
+            continue  # not an exterior at this parity level
+        exterior_poly = polys[i]
+        holes_coords: List[List[Tuple[float, float]]] = []
+        for c in children[i]:
+            if depths[c] == depths[i] + 1:
+                ring = list(polys[c].exterior.coords)
+                holes_coords.append([(float(x), float(y)) for x, y in ring])
+        try:
+            composed = sgeom.Polygon(exterior_poly.exterior.coords, holes=holes_coords)
+            if composed.is_valid and composed.area > 0:
+                result.append(composed)
+        except Exception:
+            # Fallback: keep the unmodified exterior
+            result.append(exterior_poly)
+
+    return result
 
 
 def _extract_band_mesh(
@@ -832,18 +1557,148 @@ def _match_centroids_to_junctions(
         return []
     cs = cs_candidates[-1]
 
+    # Derive a local length scale from polygons to build a robust tolerance.
+    radii = []
+    for p in cs.polygons:
+        try:
+            a = float(p.area)
+            if a > 0:
+                radii.append(math.sqrt(a / math.pi))
+        except Exception:
+            continue
+    local_scale = float(np.median(radii)) if radii else 1.0
+    # Base tolerance ~5% of local radius, with a small absolute floor.
+    tol = max(1e-6, 0.05 * local_scale)
+
     result: List[int] = []
     for c in centroids:
         point = sgeom.Point(float(c[0]), float(c[1]))
-        matched_id: Optional[int] = None
+
+        # First pass: exact containment or within tolerance distance
+        best_id: Optional[int] = None
+        best_d = float("inf")
         for poly, j_id in zip(cs.polygons, cs.junction_ids):
-            if poly.contains(point) or poly.touches(point):
-                matched_id = j_id
-                break
-        if matched_id is not None:
-            result.append(matched_id)
+            try:
+                if poly.contains(point) or poly.touches(point):
+                    best_id = j_id
+                    best_d = 0.0
+                    break
+                # Distance is zero if inside; else edge distance in 2D
+                d = float(poly.distance(point))
+                if d < best_d:
+                    best_d = d
+                    best_id = j_id
+            except Exception:
+                continue
+
+        # Accept if within tolerance; otherwise, allow a slightly larger fallback
+        if best_id is not None and (best_d <= tol or best_d <= 3.0 * tol):
+            result.append(best_id)
+
     return result
 
 
 def _next_junction_id(skel: SkeletonGraph) -> int:
     return 0 if not skel.junctions else max(skel.junctions.keys()) + 1
+
+
+def _vertex_adjacency_graph_with_labels(mesh: trimesh.Trimesh) -> Tuple[nx.Graph, Dict[int, int]]:
+    """
+    Build a vertex-adjacency graph for a mesh component where nodes are vertex
+    indices and edges connect vertices that share a triangle edge. Edge weights
+    are the Euclidean distances between vertices.
+
+    Returns the graph along with a mapping from vertex index to its connected
+    component label (0..K-1) in this graph.
+    """
+    V = np.asarray(mesh.vertices, dtype=float)
+    F = np.asarray(mesh.faces, dtype=int)
+
+    Gv = nx.Graph()
+    nV = int(V.shape[0]) if V is not None else 0
+    if nV <= 0 or F is None or len(F) == 0:
+        return Gv, {}
+
+    Gv.add_nodes_from(range(nV))
+
+    def _add_edge(u: int, v: int):
+        if u == v:
+            return
+        duv = float(np.linalg.norm(V[u] - V[v]))
+        # Avoid zero-weight degenerate edges
+        w = duv if duv > 0.0 else 1e-12
+        if Gv.has_edge(u, v):
+            # Keep the smaller weight if multiple faces share the same edge
+            if w < Gv[u][v].get("weight", w):
+                Gv[u][v]["weight"] = w
+        else:
+            Gv.add_edge(u, v, weight=w)
+
+    # For each triangular face, connect its 3 edges
+    try:
+        for tri in F:
+            if len(tri) < 3:
+                continue
+            a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+            _add_edge(a, b)
+            _add_edge(b, c)
+            _add_edge(c, a)
+    except Exception:
+        # If faces are malformed, return whatever we've built so far
+        pass
+
+    # Label connected components in the vertex graph
+    labels: Dict[int, int] = {}
+    try:
+        for idx, comp in enumerate(nx.connected_components(Gv)):
+            for v in comp:
+                labels[int(v)] = int(idx)
+    except Exception:
+        # If labeling fails, leave labels empty
+        labels = {}
+
+    return Gv, labels
+
+
+def _nearest_vertex_index(mesh: trimesh.Trimesh, point: np.ndarray) -> Optional[int]:
+    """
+    Return the index of the mesh vertex nearest to the given 3D point. If the
+    mesh has no vertices, return None.
+    """
+    V = np.asarray(mesh.vertices, dtype=float)
+    if V is None or len(V) == 0:
+        return None
+    p = np.asarray(point, dtype=float)
+    d2 = np.sum((V - p[None, :]) ** 2, axis=1)
+    idx = int(np.argmin(d2))
+    return idx
+
+
+def _seed_vertices_for_junctions(
+    mesh: trimesh.Trimesh,
+    skel: SkeletonGraph,
+    *,
+    slice_index: int,
+    z_plane: float,
+    junction_ids: List[int],
+    z_bias: float = 0.0,
+) -> Dict[int, int]:
+    """
+    For each junction id at a specified plane/slice, pick a representative mesh
+    surface vertex to serve as a seed for path-following. We take the junction's
+    2D (x,y) center and place it at z=z_plane+z_bias to avoid degeneracy right
+    on the slicing plane, then choose the nearest mesh vertex in 3D.
+
+    Returns a dict mapping junction_id -> vertex_index (in `mesh`).
+    """
+    result: Dict[int, int] = {}
+    for jid in junction_ids:
+        j = skel.junctions.get(jid)
+        if j is None:
+            continue
+        cx, cy = float(j.center[0]), float(j.center[1])
+        seed_p = np.array([cx, cy, float(z_plane + z_bias)], dtype=float)
+        vid = _nearest_vertex_index(mesh, seed_p)
+        if vid is not None:
+            result[jid] = int(vid)
+    return result

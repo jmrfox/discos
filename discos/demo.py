@@ -90,12 +90,49 @@ def create_torus_mesh(
         Trimesh torus object
     """
     # Create torus using trimesh (default: axis of symmetry along z)
-    torus = trimesh.creation.torus(
-        major_radius=major_radius,
-        minor_radius=minor_radius,
-        major_segments=major_segments,
-        minor_segments=minor_segments,
-    )
+    # Handle API differences across trimesh versions by trying multiple signatures
+    torus = None
+    candidate_kwargs = [
+        # Newer style keyword names
+        {
+            "major_radius": major_radius,
+            "minor_radius": minor_radius,
+            "major_sections": major_segments,
+            "minor_sections": minor_segments,
+        },
+        {
+            "major_radius": major_radius,
+            "minor_radius": minor_radius,
+        },
+        # Older style keyword names
+        {
+            "radius": major_radius,
+            "tube_radius": minor_radius,
+            "major_sections": major_segments,
+            "minor_sections": minor_segments,
+        },
+        {
+            "radius": major_radius,
+            "tube_radius": minor_radius,
+        },
+    ]
+
+    last_err: Optional[BaseException] = None
+    for kwargs in candidate_kwargs:
+        try:
+            torus = trimesh.creation.torus(**kwargs)
+            break
+        except TypeError as e:
+            last_err = e
+            continue
+        except Exception as e:
+            last_err = e
+            continue
+
+    if torus is None:
+        raise TypeError(
+            f"Failed to construct torus with trimesh.creation.torus using multiple signatures: {last_err}"
+        )
 
     # Rotate to desired axis of symmetry if needed
     if axis.lower() == "x":

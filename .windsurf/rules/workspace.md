@@ -11,8 +11,9 @@ all data goes in the data directory.
 all Jupyter notebooks go in the notebooks directory. 
 all tests live in the tests directory. use "uv run pytest" to run tests.
 
-code preferences:
-never import a Python package that is not used in the code you write.
+code design:
+DISCOS is designed to be a python package that is imported and used in Python scripts by the user.
+We do not need any CLI.
 
 tests:
 Keep test scripts (pytest) in the tests directory.

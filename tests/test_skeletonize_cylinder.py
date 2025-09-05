@@ -1,13 +1,13 @@
 import numpy as np
 import pytest
-import trimesh
 
 from discos.skeleton import skeletonize
+from discos.demo import create_cylinder_mesh
 
 
 def test_cylinder_connectivity_and_boundaries():
     # Cylinder: radius 1, height 4 centered at z=0 => z in [-2, 2]
-    mesh = trimesh.creation.cylinder(radius=1.0, height=4.0)
+    mesh = create_cylinder_mesh(length=4.0, radius=1.0, resolution=32, axis="z")
 
     n_slices = 4
     skel = skeletonize(mesh, n_slices=n_slices, validate_volume=True, verbose=False)
