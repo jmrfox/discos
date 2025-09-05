@@ -5,11 +5,15 @@ Provides example mesh generators for neuronal morphologies using trimesh.
 These functions create standard geometries for tutorials and demonstrations.
 """
 
+import logging
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import trimesh
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 def create_cylinder_mesh(
@@ -272,6 +276,7 @@ def create_branching_mesh(
     except Exception as e:
         # If union fails, fall back to concatenation
         warnings.warn(f"Boolean union failed: {e}, using concatenation")
+        logger.warning("Boolean union failed: %s; using concatenation", e)
         combined = trimesh.util.concatenate(all_meshes)
 
     # Smooth junctions if requested
@@ -279,9 +284,10 @@ def create_branching_mesh(
         try:
             # Apply light smoothing to reduce sharp edges at junctions
             combined = combined.smoothed()
-        except:
+        except Exception as e:
             # If smoothing fails, continue with unsmoothed mesh
             warnings.warn("Could not smooth branch junctions, using unsmoothed mesh")
+            logger.warning("Smoothing failed at branch junctions: %s", e)
 
     # Add metadata
     combined.metadata["morphology_type"] = "branching"
@@ -320,22 +326,22 @@ def save_demo_meshes(output_dir: str = "data/mesh") -> Dict[str, str]:
 
     os.makedirs(output_dir, exist_ok=True)
 
-    print("🔧 Generating demo meshes...")
+    logger.info("Generating demo meshes...")
 
     # Create cylinder mesh
-    print("  Creating cylinder mesh...")
+    logger.info("  Creating cylinder mesh...")
     cylinder = create_cylinder_mesh(length=100.0, radius=5.0, resolution=16)
     cylinder_path = os.path.join(output_dir, "cylinder.stl")
     cylinder.export(cylinder_path)
 
     # Create torus mesh
-    print("  Creating torus mesh...")
+    logger.info("  Creating torus mesh...")
     torus = create_torus_mesh(major_radius=20.0, minor_radius=5.0)
     torus_path = os.path.join(output_dir, "torus.stl")
     torus.export(torus_path)
 
     # Create Y-branching mesh
-    print("  Creating Y-branching mesh...")
+    logger.info("  Creating Y-branching mesh...")
     y_branch = create_branching_mesh(
         trunk_length=60.0,
         trunk_radius=5.0,
@@ -348,7 +354,7 @@ def save_demo_meshes(output_dir: str = "data/mesh") -> Dict[str, str]:
     y_branch.export(y_branch_path)
 
     # Create multi-branching mesh
-    print("  Creating multi-branching mesh...")
+    logger.info("  Creating multi-branching mesh...")
     multi_branch = create_branching_mesh(
         trunk_length=80.0,
         trunk_radius=6.0,
@@ -360,7 +366,7 @@ def save_demo_meshes(output_dir: str = "data/mesh") -> Dict[str, str]:
     multi_branch_path = os.path.join(output_dir, "multi_branch.stl")
     multi_branch.export(multi_branch_path)
 
-    print(f"✅ Demo meshes saved to {output_dir}/")
+    logger.info("Demo meshes saved to %s/", output_dir)
 
     return {
         "cylinder": cylinder_path,
@@ -488,6 +494,6 @@ def create_demo_neuron_mesh(
 if __name__ == "__main__":
     # Generate and save demo meshes when run as script
     paths = save_demo_meshes()
-    print(f"Demo meshes created:")
+    logger.info("Demo meshes created:")
     for name, path in paths.items():
-        print(f"  {name}: {path}")
+        logger.info("  %s: %s", name, path)

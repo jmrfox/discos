@@ -2,12 +2,17 @@
 Main mesh class
 """
 
+import logging
 import multiprocessing
 import traceback
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import trimesh
+
+# Module-level logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 def _pymeshfix_worker(
@@ -70,16 +75,23 @@ class MeshManager:
         }
 
     def log(self, message: str, level: str = "INFO"):
-        """Log messages if verbose mode is enabled."""
-        if self.verbose:
-            prefix = {
-                "INFO": "ℹ️",
-                "SUCCESS": "✅",
-                "WARNING": "⚠️",
-                "ERROR": "❌",
-                "PROCESSING": "🔧",
-            }.get(level, "📝")
-            print(f"{prefix} {message}")
+        """Compatibility shim: delegate to module logger respecting self.verbose.
+
+        Levels: INFO, SUCCESS (maps to INFO), WARNING, ERROR, PROCESSING (maps to INFO)
+        """
+        if not self.verbose:
+            return
+        lvl = level.upper()
+        if lvl in ("SUCCESS", "PROCESSING"):
+            lvl = "INFO"
+        if lvl == "INFO":
+            logger.info(message)
+        elif lvl == "WARNING":
+            logger.warning(message)
+        elif lvl == "ERROR":
+            logger.error(message)
+        else:
+            logger.info(message)
 
     # =================================================================
     # MESH LOADING AND BASIC OPERATIONS
@@ -121,10 +133,12 @@ class MeshManager:
             self.bounds = self._compute_bounds()
 
             if self.verbose:
-                print(
-                    f"Loaded mesh: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces"
+                logger.info(
+                    "Loaded mesh: %d vertices, %d faces",
+                    len(mesh.vertices),
+                    len(mesh.faces),
                 )
-                print(f"Bounds: {self.bounds}")
+                logger.debug("Bounds: %s", self.bounds)
 
             return mesh
 
@@ -539,69 +553,75 @@ class MeshManager:
         """
         analysis = self.analyze_mesh()
 
-        print("Mesh Analysis Report")
-        print("====================")
+        logger.info("Mesh Analysis Report")
+        logger.info("====================")
 
         # Basic properties
-        print(f"\nGeometry:")
-        print(f"  * Vertices: {analysis['vertex_count']}")
-        print(f"  * Faces: {analysis['face_count']}")
+        logger.info("\nGeometry:")
+        logger.info("  * Vertices: %s", analysis['vertex_count'])
+        logger.info("  * Faces: %s", analysis['face_count'])
         if analysis.get("component_count") is not None:
-            print(f"  * Components: {analysis['component_count']}")
+            logger.info("  * Components: %s", analysis['component_count'])
         if analysis.get("volume") is not None:
-            print(f"  * Volume: {analysis['volume']:.2f}")
+            logger.info("  * Volume: %.2f", analysis['volume'])
         if analysis.get("bounds") is not None:
             min_bound, max_bound = analysis["bounds"]
-            print(
-                f"  * Bounds: [{min_bound[0]:.1f}, {min_bound[1]:.1f}, {min_bound[2]:.1f}] to [{max_bound[0]:.1f}, {max_bound[1]:.1f}, {max_bound[2]:.1f}]"
+            logger.info(
+                "  * Bounds: [%.1f, %.1f, %.1f] to [%.1f, %.1f, %.1f]",
+                min_bound[0],
+                min_bound[1],
+                min_bound[2],
+                max_bound[0],
+                max_bound[1],
+                max_bound[2],
             )
 
         # Mesh quality
-        print(f"\nMesh Quality:")
-        print(f"  * Watertight: {analysis['is_watertight']}")
-        print(f"  * Winding Consistent: {analysis['is_winding_consistent']}")
+        logger.info("\nMesh Quality:")
+        logger.info("  * Watertight: %s", analysis['is_watertight'])
+        logger.info("  * Winding Consistent: %s", analysis['is_winding_consistent'])
         if analysis.get("is_manifold") is not None:
-            print(f"  * Manifold: {analysis['is_manifold']}")
+            logger.info("  * Manifold: %s", analysis['is_manifold'])
         if analysis.get("normal_direction") is not None:
-            print(f"  * Normal Direction: {analysis['normal_direction']}")
+            logger.info("  * Normal Direction: %s", analysis['normal_direction'])
         if analysis.get("duplicate_vertices") is not None:
-            print(f"  * Duplicate Vertices: {analysis['duplicate_vertices']}")
+            logger.info("  * Duplicate Vertices: %s", analysis['duplicate_vertices'])
         if analysis.get("degenerate_faces") is not None:
-            print(f"  * Degenerate Faces: {analysis['degenerate_faces']}")
+            logger.info("  * Degenerate Faces: %s", analysis['degenerate_faces'])
 
         # Topology
         if (
             analysis.get("genus") is not None
             or analysis.get("euler_characteristic") is not None
         ):
-            print(f"\nTopology:")
+            logger.info("\nTopology:")
             if analysis.get("genus") is not None:
-                print(f"  * Genus: {analysis['genus']}")
+                logger.info("  * Genus: %s", analysis['genus'])
             if analysis.get("euler_characteristic") is not None:
-                print(f"  * Euler Characteristic: {analysis['euler_characteristic']}")
+                logger.info("  * Euler Characteristic: %s", analysis['euler_characteristic'])
 
         # Issues
         if analysis["issues"]:
-            print(f"\nIssues Detected ({len(analysis['issues'])}):")
+            logger.info("\nIssues Detected (%d):", len(analysis['issues']))
             for i, issue in enumerate(analysis["issues"]):
-                print(f"  {i+1}. {issue}")
+                logger.info("  %d. %s", i + 1, issue)
         else:
-            print(f"\nNo issues detected")
+            logger.info("\nNo issues detected")
 
         # Detailed stats
         if verbose and analysis.get("normal_stats") is not None:
-            print(f"\nNormal Statistics:")
+            logger.info("\nNormal Statistics:")
             mean = analysis["normal_stats"]["mean"]
             sum_val = analysis["normal_stats"]["sum"]
-            print(f"  * Mean: [{mean[0]:.4f}, {mean[1]:.4f}, {mean[2]:.4f}]")
-            print(f"  * Sum: [{sum_val[0]:.4f}, {sum_val[1]:.4f}, {sum_val[2]:.4f}]")
+            logger.info("  * Mean: [%.4f, %.4f, %.4f]", mean[0], mean[1], mean[2])
+            logger.info("  * Sum: [%.4f, %.4f, %.4f]", sum_val[0], sum_val[1], sum_val[2])
 
-        print("\nRecommendation:")
+        logger.info("\nRecommendation:")
         if analysis["issues"]:
-            print("  Consider using repair_mesh() to fix the detected issues.")
+            logger.info("  Consider using repair_mesh() to fix the detected issues.")
         else:
-            print("  Mesh appears to be in good condition.")
-        print("====================")
+            logger.info("  Mesh appears to be in good condition.")
+        logger.info("====================")
 
     def repair_mesh(
         self,
@@ -731,24 +751,25 @@ class MeshManager:
             mesh.metadata = {}
         mesh.metadata["repair_log"] = repair_log
 
-        # Print repair summary
+        # Log repair summary
         if verbose:
             if repair_log:
-                print("🔧 Mesh Repair Summary:")
+                logger.info("Mesh Repair Summary:")
                 for log_entry in repair_log:
-                    print(f"  • {log_entry}")
+                    logger.info("  • %s", log_entry)
 
-                # Print final mesh status
-                print("\n📊 Final Mesh Status:")
-                print(
-                    f"  • Volume: {mesh.volume if hasattr(mesh, 'volume') else 'N/A'}"
+                # Final mesh status
+                logger.info("\nFinal Mesh Status:")
+                logger.info(
+                    "  • Volume: %s",
+                    mesh.volume if hasattr(mesh, "volume") else "N/A",
                 )
-                print(f"  • Watertight: {mesh.is_watertight}")
-                print(f"  • Winding consistent: {mesh.is_winding_consistent}")
-                print(f"  • Faces: {len(mesh.faces)}")
-                print(f"  • Vertices: {len(mesh.vertices)}")
+                logger.info("  • Watertight: %s", mesh.is_watertight)
+                logger.info("  • Winding consistent: %s", mesh.is_winding_consistent)
+                logger.info("  • Faces: %d", len(mesh.faces))
+                logger.info("  • Vertices: %d", len(mesh.vertices))
             else:
-                print("🔧 No repairs needed - mesh is in good condition")
+                logger.info("No repairs needed - mesh is in good condition")
 
         self.mesh = mesh
         return mesh

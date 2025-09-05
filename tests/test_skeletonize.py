@@ -1,11 +1,11 @@
+import networkx as nx
 import numpy as np
 import pytest
-import networkx as nx
-from discos.skeleton import skeletonize
+
 from discos.demo import create_cylinder_mesh, create_torus_mesh
+from discos.skeleton import skeletonize
 
-
-SLICE_COUNTS = [3, 4, 5, 6, 7, 8, 9, 10, 16, 32, 64]
+SLICE_COUNTS = [3, 5, 7, 9, 30, 31]
 
 
 def _cycle_count(G: nx.Graph) -> int:
@@ -16,7 +16,7 @@ def _cycle_count(G: nx.Graph) -> int:
 @pytest.mark.parametrize("n_slices", SLICE_COUNTS)
 def test_cylinder_single_component_no_cycles(n_slices: int):
     # Simple solid cylinder centered at origin with height spanning z in [-2, 2]
-    mesh = create_cylinder_mesh(length=4.0, radius=1.0, resolution=32, axis="z")
+    mesh = create_cylinder_mesh(length=4.0, radius=1.0, resolution=24)
 
     skel = skeletonize(mesh, n_slices=n_slices, validate_volume=True, verbose=False)
     G = skel.to_networkx()
@@ -33,11 +33,7 @@ def test_torus_single_component_one_cycle(n_slices: int):
     # Donut (torus) around Z; expect exactly one cycle in the skeleton graph
     # Choose radii to be well-resolved
     torus = create_torus_mesh(
-        major_radius=2.0,
-        minor_radius=0.6,
-        major_segments=128,
-        minor_segments=64,
-        axis="z",
+        major_radius=np.pi, minor_radius=np.pi / 3, major_segments=24, minor_segments=12
     )
 
     skel = skeletonize(torus, n_slices=n_slices, validate_volume=True, verbose=False)

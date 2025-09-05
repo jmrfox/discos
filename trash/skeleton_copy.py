@@ -71,7 +71,6 @@ EXAMPLE 1:
 
 """
 
-import logging
 import math
 import warnings
 from dataclasses import dataclass
@@ -85,11 +84,6 @@ import shapely.geometry as sgeom
 import trimesh
 
 from .mesh import MeshManager
-
-# Module-level logger
-logger = logging.getLogger(__name__)
-# Ensure no "No handler" warnings in library usage; applications can configure handlers.
-logger.addHandler(logging.NullHandler())
 
 # ============================================================================
 # Data models
@@ -351,7 +345,7 @@ class SkeletonGraph:
         radius = attrs.get("radius")
 
         if boundary_2d is None or len(boundary_2d) < 2:
-            logger.warning("Node '%s' has no boundary_2d; cannot plot boundary.", node_id)
+            warnings.warn(f"Node '{node_id}' has no boundary_2d; cannot plot boundary.")
         if center is None or radius is None:
             raise ValueError(
                 f"Node '{node_id}' missing center/radius required for plotting"
@@ -431,7 +425,7 @@ class SkeletonGraph:
         nodes.sort(key=sort_key)
         n = len(nodes)
         if n == 0:
-            logger.info("No nodes available to plot")
+            warnings.warn("No nodes available to plot")
             return None
 
         ncols = max(1, int(max_cols))
@@ -764,9 +758,7 @@ def skeletonize(
     validate_volume: bool = True,
     volume_tol: float = 0.05,
     verbose: bool = False,
-    verbosity: Optional[int] = None,
     enforce_connected: bool = True,
-    connect_isolated_terminals: bool = True,
 ) -> SkeletonGraph:
     """
     Build a `SkeletonGraph` by slicing the mesh along z into `n_slices` bands.
@@ -782,24 +774,6 @@ def skeletonize(
     Returns:
         SkeletonGraph
     """
-
-    # Backward-compatibility mapping for verbosity levels
-    if verbosity is None:
-        eff_verbosity = 2 if verbose else 0
-    else:
-        try:
-            eff_verbosity = int(verbosity)
-        except Exception:
-            eff_verbosity = 0
-        # If both are provided, verbosity takes precedence
-
-    def v_info(msg: str, *args: Any) -> None:
-        if eff_verbosity >= 1:
-            logger.info(msg, *args)
-
-    def v_debug(msg: str, *args: Any) -> None:
-        if eff_verbosity >= 2:
-            logger.debug(msg, *args)
 
     mm = (
         mesh_or_manager
@@ -823,8 +797,8 @@ def skeletonize(
             )
     except Exception:
         # If split fails, proceed but warn in verbose mode
-        if eff_verbosity >= 1:
-            logger.warning("Failed to verify single component via mesh.split()")
+        if verbose:
+            print("Warning: failed to verify single component via mesh.split()")
 
     zmin, zmax = mm.get_z_range()
     if not np.isfinite(zmin) or not np.isfinite(zmax) or zmax <= zmin:
@@ -832,32 +806,6 @@ def skeletonize(
 
     if n_slices < 1:
         raise ValueError("n_slices must be >= 1")
-
-    v_info(
-        "Starting skeletonization: n_slices=%d, radius_mode=%s, validate_volume=%s, volume_tol=%.3f",
-        n_slices,
-        radius_mode,
-        validate_volume,
-        volume_tol,
-    )
-    v_debug(
-        "Mesh z-range: zmin=%.6g, zmax=%.6g (dz=%.6g)",
-        zmin,
-        zmax,
-        float(zmax - zmin),
-    )
-
-    # Warn about known issue when n_slices is a power of 2
-    try:
-        n_int = int(n_slices)
-        if n_int > 0 and (n_int & (n_int - 1)) == 0:
-            msg = (
-                "DISCOS skeletonize: n_slices is a power of 2. The current connectivity algorithm is known to misbehave for some meshes in this case."
-            )
-            warnings.warn(msg, RuntimeWarning)
-            logger.warning(msg)
-    except Exception:
-        pass
 
     # Uniform partition including bounding planes
     z_planes = np.linspace(zmin, zmax, n_slices + 1)
@@ -882,7 +830,7 @@ def skeletonize(
         slice_index=0,
         probe_offset=+terminal_probe,
         radius_mode=radius_mode,
-        verbosity=eff_verbosity,
+        verbose=verbose,
     )
     terminal_top_ids = _create_junctions_at_cut(
         skel,
@@ -891,7 +839,7 @@ def skeletonize(
         slice_index=n_slices - 1,
         probe_offset=-terminal_probe,
         radius_mode=radius_mode,
-        verbosity=eff_verbosity,
+        verbose=verbose,
     )
 
     # --------------------- Internal cuts: cross-sections ---------------------
@@ -903,14 +851,8 @@ def skeletonize(
             slice_index=si,
             probe_offset=0.0,
             radius_mode=radius_mode,
-            verbosity=eff_verbosity,
+            verbose=verbose,
         )
-
-    v_info(
-        "Constructed cross-sections: %d cuts, %d total junctions",
-        len(skel.cross_sections),
-        len(skel.junctions),
-    )
 
     # ---------------- Bands: connect junctions across adjacent cuts ----------
     junctions_by_slice: Dict[int, List[int]] = {}
@@ -935,13 +877,6 @@ def skeletonize(
             components = [band_mesh]
         # Track number of components in this band for potential fallbacks
         n_comp_in_band = len(components)
-        v_debug(
-            "Band %d [%.6g, %.6g]: %d component(s)",
-            band_index,
-            z_low,
-            z_high,
-            n_comp_in_band,
-        )
 
         for comp in components:
             # Volumes may be negative if orientation is inverted; take absolute
@@ -956,25 +891,7 @@ def skeletonize(
             lower_locals = _section_polygon_centroids(comp, z_low + eps)
             if not lower_locals:
                 bt = float(max(z_high - z_low, 0.0))
-                probe_offsets = [
-                    5.0 * eps,
-                    20.0 * eps,
-                    0.001 * bt,
-                    0.002 * bt,
-                    0.005 * bt,
-                    0.01 * bt,
-                ]
-                # Near the bottom boundary, probe a little deeper to avoid
-                # degenerate sections exactly at the cap. Include terminal_probe
-                # and larger fractions of the band thickness.
-                if band_index == 0:
-                    probe_offsets.extend(
-                        [
-                            min(0.02 * bt, terminal_probe * 0.5),
-                            min(0.05 * bt, terminal_probe),
-                            min(0.10 * bt, terminal_probe * 2.0),
-                        ]
-                    )
+                probe_offsets = [5.0 * eps, 20.0 * eps, 0.001 * bt, 0.002 * bt, 0.005 * bt, 0.01 * bt]
                 for off in probe_offsets:
                     if off >= bt or off <= 0.0:
                         continue
@@ -986,23 +903,7 @@ def skeletonize(
             upper_locals = _section_polygon_centroids(comp, z_high - eps)
             if not upper_locals:
                 bt = float(max(z_high - z_low, 0.0))
-                probe_offsets = [
-                    5.0 * eps,
-                    20.0 * eps,
-                    0.001 * bt,
-                    0.002 * bt,
-                    0.005 * bt,
-                    0.01 * bt,
-                ]
-                # Near the top boundary, probe a little deeper into the band.
-                if band_index == n_slices - 1:
-                    probe_offsets.extend(
-                        [
-                            min(0.02 * bt, terminal_probe * 0.5),
-                            min(0.05 * bt, terminal_probe),
-                            min(0.10 * bt, terminal_probe * 2.0),
-                        ]
-                    )
+                probe_offsets = [5.0 * eps, 20.0 * eps, 0.001 * bt, 0.002 * bt, 0.005 * bt, 0.01 * bt]
                 for off in probe_offsets:
                     if off >= bt or off <= 0.0:
                         continue
@@ -1017,78 +918,13 @@ def skeletonize(
                 skel=skel,
                 slice_index=band_index,
             )
-            # Targeted fallback for the first band: if no lower matches were found
-            # but we do have local centroids and existing junctions at slice 0,
-            # assign the nearest junction(s) by polygon centroid proximity.
-            if band_index == 0 and not lower_ids and lower_locals:
-                # Find the cross-section record for slice 0 at z_low
-                cs_candidates = [
-                    cs
-                    for cs in skel.cross_sections
-                    if cs.slice_index == 0 and np.isclose(cs.z, z_low)
-                ]
-                if cs_candidates:
-                    cs0 = cs_candidates[-1]
-                    # Precompute polygon centroids
-                    poly_centroids = []
-                    for poly in cs0.polygons:
-                        try:
-                            poly_centroids.append(
-                                np.array([float(poly.centroid.x), float(poly.centroid.y)], dtype=float)
-                            )
-                        except Exception:
-                            poly_centroids.append(None)
-                    chosen: List[int] = []
-                    for c in lower_locals:
-                        best_j: Optional[int] = None
-                        best_d: float = float("inf")
-                        for pc, j_id in zip(poly_centroids, cs0.junction_ids):
-                            if pc is None:
-                                continue
-                            d = float(np.linalg.norm(pc - np.asarray(c, dtype=float)))
-                            if d < best_d:
-                                best_d = d
-                                best_j = j_id
-                        if best_j is not None:
-                            chosen.append(best_j)
-                    # Deduplicate while preserving order
-                    seen = set()
-                    lower_ids = [j for j in chosen if not (j in seen or seen.add(j))]
-                if eff_verbosity >= 2:
-                    logger.debug(
-                        "[diag] band 0 lower fallback -> lower_ids=%s (had lower_locals=%d)",
-                        lower_ids,
-                        len(lower_locals),
-                    )
-
-            # Additional minimal fallback for the very first band: if matching
-            # completely failed (no lower_ids), try selecting a single best
-            # junction from slice 0 to avoid leaving the terminal isolated.
-            if band_index == 0 and not lower_ids:
-                cand0 = list(junctions_by_slice.get(0, []))
-                if len(cand0) == 1:
-                    lower_ids = cand0
-                elif len(cand0) > 1 and upper_locals:
-                    # Choose the junction whose center is closest to the mean of
-                    # the detected upper centroids (xy) as a conservative guess.
-                    u_mean = np.mean(np.asarray(upper_locals, dtype=float), axis=0)
-                    best_j = None
-                    best_d = float("inf")
-                    for j_id in cand0:
-                        c = skel.junctions[j_id].center
-                        d = float(np.linalg.norm(np.asarray([c[0], c[1]]) - u_mean))
-                        if d < best_d:
-                            best_d = d
-                            best_j = j_id
-                    if best_j is not None:
-                        lower_ids = [best_j]
-                if eff_verbosity >= 2:
-                    logger.debug(
-                        "[diag] band 0 lower minimal fallback -> lower_ids=%s from slice0 candidates=%s",
-                        lower_ids,
-                        cand0,
-                    )
-
+            # Fallback: if no matches found (e.g., tiny/fragile sections),
+            # use all junctions known for this slice to avoid dropping edges.
+            if not lower_ids:
+                lower_ids = list(junctions_by_slice.get(band_index, []))
+            # For the top band, clamp to the last real slice index (n_slices-1)
+            # to allow closure behavior without introducing non-adjacent slice
+            # connections.
             upper_slice_index = min(band_index + 1, n_slices - 1)
             upper_ids = _match_centroids_to_junctions(
                 centroids=upper_locals,
@@ -1096,52 +932,10 @@ def skeletonize(
                 skel=skel,
                 slice_index=upper_slice_index,
             )
-            v_debug(
-                "Band %d component: matched lower=%s, upper=%s",
-                band_index,
-                lower_ids,
-                upper_ids,
-            )
-            # Symmetric minimal fallback for the first band when no upper_ids matched
-            if band_index == 0 and not upper_ids:
-                cand1 = list(junctions_by_slice.get(upper_slice_index, []))
-                if len(cand1) == 1:
-                    upper_ids = cand1
-                elif len(cand1) > 1 and lower_locals:
-                    l_mean = np.mean(np.asarray(lower_locals, dtype=float), axis=0)
-                    best_j = None
-                    best_d = float("inf")
-                    for j_id in cand1:
-                        c = skel.junctions[j_id].center
-                        d = float(np.linalg.norm(np.asarray([c[0], c[1]]) - l_mean))
-                        if d < best_d:
-                            best_d = d
-                            best_j = j_id
-                    if best_j is not None:
-                        upper_ids = [best_j]
-                if eff_verbosity >= 2:
-                    logger.debug(
-                        "[diag] band 0 upper minimal fallback -> upper_ids=%s from slice1 candidates=%s",
-                        upper_ids,
-                        cand1,
-                    )
-            # Minimal fallback for the last band when no upper_ids matched
-            if band_index == n_slices - 1 and not upper_ids:
-                candU = list(junctions_by_slice.get(upper_slice_index, []))
-                if len(candU) == 1:
-                    upper_ids = candU
-                elif len(candU) > 1 and lower_locals:
-                    l_mean = np.mean(np.asarray(lower_locals, dtype=float), axis=0)
-                    best_j = None
-                    best_d = float("inf")
-                    for j_id in candU:
-                        c = skel.junctions[j_id].center
-                        d = float(np.linalg.norm(np.asarray([c[0], c[1]]) - l_mean))
-                        if d < best_d:
-                            best_d = d
-                            best_j = j_id
-                    if best_j is not None:
-                        upper_ids = [best_j]
+            # Fallback: likewise, if matching failed near the upper plane,
+            # include all junctions at the upper slice.
+            if not upper_ids:
+                upper_ids = list(junctions_by_slice.get(upper_slice_index, []))
 
             # Build a Segment metadata object
             seg = Segment(
@@ -1155,12 +949,162 @@ def skeletonize(
                 upper_junction_ids=upper_ids,
             )
             skel.segments.append(seg)
-            # Simplified connectivity: connect all lower junctions to all upper
-            # junctions that are matched within this band component. This
-            # ensures connections only occur between adjacent slices and within
-            # the same contiguous volume component.
-            if lower_ids and upper_ids:
-                skel.add_segment_edges(seg)
+
+            # Establish connectivity between lower and upper junctions by
+            # verifying there is a vertex-graph path within this component mesh.
+            # This prevents over-connecting (fully bipartite) when multiple
+            # junctions exist on each side of the band.
+            try:
+                # Build a vertex adjacency graph once per component
+                Vgraph, v_labels = _vertex_adjacency_graph_with_labels(comp)
+
+                # Choose a small bias to locate seed points slightly inside the band
+                bt = float(max(z_high - z_low, 0.0))
+                z_bias_low = max(5.0 * eps, 0.005 * bt)
+                z_bias_up = -max(5.0 * eps, 0.005 * bt)
+
+                # Map each junction id to a representative seed vertex index on the surface
+                lower_seed = _seed_vertices_for_junctions(
+                    comp,
+                    skel,
+                    slice_index=band_index,
+                    z_plane=z_low,
+                    junction_ids=lower_ids,
+                    z_bias=z_bias_low,
+                )
+                upper_seed = _seed_vertices_for_junctions(
+                    comp,
+                    skel,
+                    slice_index=upper_slice_index,
+                    z_plane=z_high,
+                    junction_ids=upper_ids,
+                    z_bias=z_bias_up,
+                )
+
+                # Identify candidate pairs whose seeds are connected in the
+                # vertex graph (prefer fast CC labels; fall back to path checks),
+                # and compute a proximity score to choose a sparse one-to-one set
+                # of edges (greedy nearest matching) to avoid extra cycles.
+                candidates: List[Tuple[float, int, int]] = []  # (dist, jl, ju)
+                for jl in lower_ids:
+                    if jl not in lower_seed:
+                        continue
+                    v_l = lower_seed[jl]
+                    c_l = skel.junctions[jl].center
+                    for ju in upper_ids:
+                        if ju not in upper_seed:
+                            continue
+                        v_u = upper_seed[ju]
+                        connected = False
+                        if v_labels:
+                            connected = v_labels.get(v_l, -1) == v_labels.get(v_u, -2)
+                        else:
+                            try:
+                                connected = nx.has_path(Vgraph, v_l, v_u)
+                            except Exception:
+                                connected = False
+                        if not connected:
+                            continue
+                        c_u = skel.junctions[ju].center
+                        d = float(np.linalg.norm(np.asarray(c_l) - np.asarray(c_u)))
+                        candidates.append((d, jl, ju))
+
+                candidates.sort(key=lambda t: t[0])
+                added_any = False
+                matched_l: set = set()
+                matched_u: set = set()
+                # Pass 1: greedy nearest one-to-one matching
+                for d, jl, ju in candidates:
+                    if jl in matched_l or ju in matched_u:
+                        continue
+                    skel.G.add_edge(
+                        jl,
+                        ju,
+                        kind="segment",
+                        segment_id=int(seg.id),
+                        slice_index=int(seg.slice_index),
+                        z_lower=float(seg.z_lower),
+                        z_upper=float(seg.z_upper),
+                        volume=float(seg.volume),
+                        surface_area=float(seg.surface_area),
+                    )
+                    matched_l.add(jl)
+                    matched_u.add(ju)
+                    added_any = True
+
+                # Pass 2: limited coverage to avoid extra cycles.
+                # Only for unmatched LOWER junctions that are currently isolated
+                # (degree 0 so far), connect to nearest path-connected candidate.
+                if candidates:
+                    # Build adjacency from candidates for quick lookups
+                    cand_by_l: Dict[int, List[Tuple[float, int]]] = {}
+                    cand_by_u: Dict[int, List[Tuple[float, int]]] = {}
+                    for d, jl, ju in candidates:
+                        cand_by_l.setdefault(jl, []).append((d, ju))
+                        cand_by_u.setdefault(ju, []).append((d, jl))
+                    for jl in lower_ids:
+                        if jl in matched_l:
+                            continue
+                        # Only add a coverage edge if this node is currently isolated
+                        if skel.G.degree(jl) != 0:
+                            continue
+                        opts = cand_by_l.get(jl, [])
+                        if not opts:
+                            continue
+                        opts.sort(key=lambda t: t[0])
+                        d, ju = opts[0]
+                        skel.G.add_edge(
+                            jl,
+                            ju,
+                            kind="segment",
+                            segment_id=int(seg.id),
+                            slice_index=int(seg.slice_index),
+                            z_lower=float(seg.z_lower),
+                            z_upper=float(seg.z_upper),
+                            volume=float(seg.volume),
+                            surface_area=float(seg.surface_area),
+                        )
+                        matched_l.add(jl)
+                        added_any = True
+
+                    # Symmetric coverage: for unmatched UPPER junctions that are
+                    # currently isolated (degree 0), connect to nearest path-connected
+                    # LOWER candidate. This helps avoid disconnections when a branch
+                    # starts at the upper side of a band.
+                    for ju in upper_ids:
+                        if ju in matched_u:
+                            continue
+                        if skel.G.degree(ju) != 0:
+                            continue
+                        opts = cand_by_u.get(ju, [])
+                        if not opts:
+                            continue
+                        opts.sort(key=lambda t: t[0])
+                        d, jl = opts[0]
+                        skel.G.add_edge(
+                            jl,
+                            ju,
+                            kind="segment",
+                            segment_id=int(seg.id),
+                            slice_index=int(seg.slice_index),
+                            z_lower=float(seg.z_lower),
+                            z_upper=float(seg.z_upper),
+                            volume=float(seg.volume),
+                            surface_area=float(seg.surface_area),
+                        )
+                        matched_u.add(ju)
+                        added_any = True
+
+                # If nothing was added and there were no path-connected candidates,
+                # we do not fabricate edges: this preserves correctness for general
+                # meshes (no torus-specific fallbacks).
+            except Exception as e:
+                # If graph construction or seeding fails, log and skip adding edges
+                # to preserve correctness (no non-path-based fallback).
+                if verbose:
+                    print(
+                        f"[warn] Path-based connectivity failed in band {band_index}: {e}. Skipping edge additions for this band component."
+                    )
             segment_id += 1
 
     # -------------------- Attach boundary polylines to nodes -------------------
@@ -1189,86 +1133,58 @@ def skeletonize(
                     f"mesh={mesh_vol:.6g}, rel_err={rel_err:.3%} (> {volume_tol:.1%})"
                 )
         except Exception as e:
-            if eff_verbosity >= 1:
-                logger.warning("Volume validation warning: %s", e)
-        else:
-            v_info(
-                "Volume check OK: bands=%.6g, mesh=%.6g, rel_err=%.3f%%",
-                total_band_volume,
-                mesh_vol,
-                100.0
-                * (abs(total_band_volume - mesh_vol) / (mesh_vol + 1e-12)),
-            )
+            if verbose:
+                print(f"Volume validation warning: {e}")
 
-    # (Removed) Genus-based topological closure: no non-adjacent closure edges are added.
-
-    # ---------------- Safety net: connect isolated terminal nodes -------------
-    if connect_isolated_terminals:
-        # Bottom slice 0 isolated nodes connect to nearest in slice 1
-        s0 = list(junctions_by_slice.get(0, []))
-        s1 = list(junctions_by_slice.get(1, [])) if n_slices >= 2 else []
-        for j in s0:
-            if skel.G.degree(j) == 0 and s1:
-                cj = skel.junctions[j].center
-                best = None
-                best_d = float("inf")
-                for k in s1:
-                    ck = skel.junctions[k].center
-                    d = float(np.linalg.norm(np.asarray(cj[:2]) - np.asarray(ck[:2])))
-                    if d < best_d:
-                        best_d = d
-                        best = k
-                if best is not None and not skel.G.has_edge(j, best):
-                    if eff_verbosity >= 2:
-                        logger.debug(
-                            "[diag] safety-net: connecting isolated bottom node %s -> %s",
-                            j,
-                            best,
-                        )
-                    skel.G.add_edge(
-                        j,
-                        best,
-                        kind="segment",
-                        segment_id=-2,
-                        slice_index=0,
-                        z_lower=float(skel.G.nodes[j].get("z", zmin)),
-                        z_upper=float(skel.G.nodes[best].get("z", zmin)),
-                        volume=0.0,
-                        surface_area=0.0,
-                    )
-        # Top slice isolated nodes connect to nearest in previous slice
-        top_slice = n_slices - 1
-        sT = list(junctions_by_slice.get(top_slice, []))
-        sPrev = list(junctions_by_slice.get(top_slice - 1, [])) if top_slice - 1 >= 0 else []
-        for j in sT:
-            if skel.G.degree(j) == 0 and sPrev:
-                cj = skel.junctions[j].center
-                best = None
-                best_d = float("inf")
-                for k in sPrev:
-                    ck = skel.junctions[k].center
-                    d = float(np.linalg.norm(np.asarray(cj[:2]) - np.asarray(ck[:2])))
-                    if d < best_d:
-                        best_d = d
-                        best = k
-                if best is not None and not skel.G.has_edge(j, best):
-                    if eff_verbosity >= 2:
-                        logger.debug(
-                            "[diag] safety-net: connecting isolated top node %s -> %s",
-                            j,
-                            best,
-                        )
-                    skel.G.add_edge(
-                        best,
-                        j,
-                        kind="segment",
-                        segment_id=-2,
-                        slice_index=top_slice - 1,
-                        z_lower=float(skel.G.nodes[best].get("z", zmax)),
-                        z_upper=float(skel.G.nodes[j].get("z", zmax)),
-                        volume=0.0,
-                        surface_area=0.0,
-                    )
+    # --------------------- Genus-based topological closure --------------------
+    # Ensure the skeleton graph has at least as many independent cycles as the
+    # genus of the input mesh. This is important for meshes like a torus (genus=1),
+    # where purely axial adjacent-slice connections would otherwise yield a chain
+    # with no cycles. We add a single closure edge between the bottom-most and
+    # top-most nodes if the current cycle count is below the mesh genus.
+    try:
+        chi = getattr(mesh, "euler_number", None)
+        chi = float(chi) if chi is not None else None
+    except Exception:
+        chi = None
+    genus = 0
+    if chi is not None and np.isfinite(chi):
+        try:
+            genus = max(0, int(round((2.0 - chi) / 2.0)))
+        except Exception:
+            genus = 0
+    if genus > 0:
+        try:
+            current_cycles = len(nx.cycle_basis(skel.G))
+        except Exception:
+            current_cycles = 0
+        if current_cycles < genus:
+            # Find nodes at extremal z
+            try:
+                nodes_with_z = [(n, a.get("z")) for n, a in skel.G.nodes(data=True)]
+                zs = [float(z) for _, z in nodes_with_z if z is not None]
+                if zs:
+                    zmin_val = float(min(zs))
+                    zmax_val = float(max(zs))
+                    bottom_nodes = [n for n, z in nodes_with_z if z is not None and np.isclose(float(z), zmin_val)]
+                    top_nodes = [n for n, z in nodes_with_z if z is not None and np.isclose(float(z), zmax_val)]
+                    if bottom_nodes and top_nodes:
+                        u = bottom_nodes[0]
+                        v = top_nodes[0]
+                        if not skel.G.has_edge(u, v):
+                            skel.G.add_edge(
+                                u,
+                                v,
+                                kind="closure",
+                                segment_id=-1,
+                                slice_index=-1,
+                                z_lower=zmin_val,
+                                z_upper=zmax_val,
+                                volume=0.0,
+                                surface_area=0.0,
+                            )
+            except Exception:
+                pass
 
     # -------------------------- Connectivity check ---------------------------
     # By default, require a single connected component for the SkeletonGraph.
@@ -1283,12 +1199,6 @@ def skeletonize(
                 f"SkeletonGraph has {ncomp} connected components, but a single connected component is required. "
                 f"Re-check mesh integrity or call skeletonize(..., enforce_connected=False) to bypass."
             )
-        v_info(
-            "Final connectivity: %d node(s), %d edge(s), %d component(s)",
-            skel.G.number_of_nodes(),
-            skel.G.number_of_edges(),
-            ncomp,
-        )
 
     return skel
 
@@ -1306,7 +1216,7 @@ def _create_junctions_at_cut(
     slice_index: int,
     probe_offset: float,
     radius_mode: str,
-    verbosity: int,
+    verbose: bool,
 ) -> List[int]:
     """
     Create junctions for all closed areas at a cut plane.
@@ -1361,16 +1271,6 @@ def _create_junctions_at_cut(
             junction_ids=junction_ids,
         )
     )
-    # Detailed per-cut diagnostics at verbosity>=2
-    if verbosity >= 2:
-        logger.debug(
-            "Cut z=%.6g (slice %d, probe_offset=%.3g): %d polygon(s) -> junction_ids=%s",
-            z_plane,
-            slice_index,
-            probe_offset,
-            len(polygons),
-            junction_ids,
-        )
     return added_ids
 
 
@@ -1498,26 +1398,22 @@ def _assert_no_overlap(
                     plt.tight_layout()
                     plt.show()
                     plt.close(fig)
-                    # Also log a concise diagnostic line
+                    # Also print a concise diagnostic line to the console
                     if z_level is not None:
-                        logger.debug(
-                            "[diag] Cross-section overlap at z=%.6g: polygons %d and %d, area=%.6g (> tol=%.2g)",
-                            z_level,
-                            i,
-                            j,
-                            float(inter.area),
-                            tol,
+                        print(
+                            f"[diag] Cross-section overlap at z={z_level:.6g}: polygons {i} and {j}, "
+                            f"area={float(inter.area):.6g} (> tol={tol:.2g})"
                         )
                     else:
-                        logger.debug(
-                            "[diag] Cross-section overlap: polygons %d and %d, area=%.6g (> tol=%.2g)",
-                            i,
-                            j,
-                            float(inter.area),
-                            tol,
+                        print(
+                            f"[diag] Cross-section overlap: polygons {i} and {j}, "
+                            f"area={float(inter.area):.6g} (> tol={tol:.2g})"
                         )
                 except Exception as e:
-                    logger.warning("Failed to plot cross-section overlap diagnostics: %s", e)
+                    warnings.warn(
+                        f"Failed to plot cross-section overlap diagnostics: {e}",
+                        RuntimeWarning,
+                    )
 
                 raise ValueError(
                     "Overlapping cross-section polygons detected in a single cut"
@@ -1706,9 +1602,7 @@ def _next_junction_id(skel: SkeletonGraph) -> int:
     return 0 if not skel.junctions else max(skel.junctions.keys()) + 1
 
 
-def _vertex_adjacency_graph_with_labels(
-    mesh: trimesh.Trimesh,
-) -> Tuple[nx.Graph, Dict[int, int]]:
+def _vertex_adjacency_graph_with_labels(mesh: trimesh.Trimesh) -> Tuple[nx.Graph, Dict[int, int]]:
     """
     Build a vertex-adjacency graph for a mesh component where nodes are vertex
     indices and edges connect vertices that share a triangle edge. Edge weights
