@@ -6,6 +6,11 @@ uv:
 I use the uv package manager. When running Python in the terminal, do "uv run script.py" to run a script with the venv.
 Tests should be run using "uv run pytest".
 
+running terminal commands:
+a common problem I have observed is that the AI will run a terminal command within the chat (e.g., "uv run pytest" to run the test suite), but instead of waiting for that command to finish running, the AI will look at the previous command output as if it were the output of the command it just sent.
+This results in confusion, for instance, when iteratively developing code and running a test suite to check for errors. 
+It is crucial that the AI, when it runs a terminal command in chat, wait for the output from that same command.
+
 project structure:
 all data goes in the data directory. 
 all Jupyter notebooks go in the notebooks directory. 

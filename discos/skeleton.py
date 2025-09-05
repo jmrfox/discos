@@ -10,22 +10,22 @@ slicing up the original mesh along the z-axis into a series of slices. Within ea
 Important terminology:
 - "Original Mesh": A mesh is a 3D object defined by a set of vertices, edges, and faces. DISCOS does not destroy the mesh you give it.
     For use in DISCOS, the original mesh should be a single watertight volume with no self-intersections.
-- "Bounding planes": The two planes of constant z-value that bound the original mesh: one at the minimum z-value 
+- "Bounding planes": The two planes of constant z-value that bound the original mesh: one at the minimum z-value
     and one at the maximum z-value.
-- "Terminal points": The points where the bounding planes intersect the original mesh. 
+- "Terminal points": The points where the bounding planes intersect the original mesh.
     In other words, they represent the minimum and maximum z-value of the original mesh.
-- "Cut": A plane of constant z-value that intersects the original mesh. A single cut always has at least one cross-section 
+- "Cut": A plane of constant z-value that intersects the original mesh. A single cut always has at least one cross-section
     associated with it.
-- "Slice": A 3D partition of the original mesh with its volume either between two adjacent cuts, 
+- "Slice": A 3D partition of the original mesh with its volume either between two adjacent cuts,
     or between one cut and one bounding plane.
     A single slice might contain multiple segments (closed volumes). We use the method MeshManager.slice_mesh_by_z to create the slices.
 - "Segment": A contiguous 3D sub-volume of the original mesh with its volume between two cuts or between one cut and one bounding plane.
     Every slice necessarily contains at least one segment.
     Each segment has a single contiguous external surface and at least one contiguous internal surface.
-- "Cross-section": A contiguous 2D curve (and its area) where the original mesh intersects with a cut. 
+- "Cross-section": A contiguous 2D curve (and its area) where the original mesh intersects with a cut.
     It has a surface area (internal to the original mesh volume) in the xy-plane.
     Every cross-section is shared by two adjacent segments. Every cross-section has at least one Junction fitted to it, but perhaps more.
-- "Junction": A disk with radius and center position fitted each closed area within the cross-section. 
+- "Junction": A disk with radius and center position fitted each closed area within the cross-section.
     Junctions are one-to-one with the nodes of the skeleton graph.
 - "SkeletonGraph": A graph representation where segments are edges and nodes are junctions and terminal points.
     Edges only connect nodes on adjacent planes. No two nodes at the same cut (z-value) may be connected by an edge.
@@ -40,19 +40,19 @@ The algorithm follows these steps:
 2. Create bounding planes at the minimum and maximum z-value of the mesh.
     Extract terminal points.
     Create cuts at regular intervals along the z-axis using MeshManager.slice_mesh_by_z.
-    (Each application of slice_mesh_by_z returns a list containing two meshes: one below the cut and one above the cut.) 
+    (Each application of slice_mesh_by_z returns a list containing two meshes: one below the cut and one above the cut.)
     The algorithm takes a parameter n_slices which is how many 3D slices (partitions) should be created;
-        equivalently, n_cuts = n_slices - 1. 
-    The slice_mesh_by_z function is repeated n_cuts times, results in the ordered set of slices. 
-    
+        equivalently, n_cuts = n_slices - 1.
+    The slice_mesh_by_z function is repeated n_cuts times, results in the ordered set of slices.
+
 3. For each cut, extract the cross-section. Note that one cross section may include multiple closed areas.
     Fit a junction (radius and center position) to each closed area in the cross-section.
-    
+
 4. Build the SkeletonGraph. Each junction becomes a node and each edge connects two nodes on adjacent cuts.
-    A node is connected to another if and only if there is a series of mesh edges connecting their two junctions (in adjacent cuts only), 
+    A node is connected to another if and only if there is a series of mesh edges connecting their two junctions (in adjacent cuts only),
     meaning they belong to the same segment at different z-values.
 
-5. Validate volume and surface area conservation. 
+5. Validate volume and surface area conservation.
     The sum of the volumes of the segments should agree with the volume of the original mesh within a tolerance.
 
 
@@ -62,10 +62,10 @@ EXAMPLE 1:
     The cylinder is centered at the origin (0, 0, 0) and extends from z = -2 to z = 2.
     We will slice the cylinder with n_slices = 4. Each segment should have the same volume.
     There are 3 cuts, each with one cross-section. Each cross section has one junction.
-    The skeleton graph should have 5 nodes and 4 edges. 
+    The skeleton graph should have 5 nodes and 4 edges.
     One node at each of the 3 junctions and one at each point where the mesh intersects the bounding planes,
         and 4 edges (one between each pair of adjacent planes, corresponding to the 4 slices.
-    
+
 
 
 
@@ -160,6 +160,9 @@ class SkeletonGraph:
         self.junctions: Dict[int, Junction] = {}
         self.cross_sections: List[CrossSection] = []
         self.segments: List[Segment] = []
+        # Snapshot of transforms applied to the mesh (for selective undo at export)
+        # Each entry: {"name": str, "M": np.ndarray(4x4), "is_uniform_scale": bool, "uniform_scale": Optional[float]}
+        self.transforms_applied: List[Dict[str, Any]] = []
 
     # ----------------------------- Node/edge API -----------------------------
     def add_junction(self, j: Junction):
@@ -351,7 +354,9 @@ class SkeletonGraph:
         radius = attrs.get("radius")
 
         if boundary_2d is None or len(boundary_2d) < 2:
-            logger.warning("Node '%s' has no boundary_2d; cannot plot boundary.", node_id)
+            logger.warning(
+                "Node '%s' has no boundary_2d; cannot plot boundary.", node_id
+            )
         if center is None or radius is None:
             raise ValueError(
                 f"Node '{node_id}' missing center/radius required for plotting"
@@ -447,16 +452,31 @@ class SkeletonGraph:
             sharey=share_axes,
         )
 
-        for idx, (nid, _) in enumerate(nodes):
+        for idx, (nid, attrs) in enumerate(nodes):
             r = idx // ncols
             c = idx % ncols
             ax = axes[r][c]
+            # Determine z from node attributes; fall back to center[2]
+            z_val = attrs.get("z")
+            if z_val is None:
+                ctr = attrs.get("center")
+                if ctr is not None and len(ctr) == 3:
+                    z_val = float(ctr[2])
+            # Build a title that includes slice, cross-section index, and z-level
+            slice_idx = attrs.get("slice_index")
+            cs_idx = attrs.get("cross_section_index")
+            title = (
+                f"{nid} (slice {slice_idx}, cs {cs_idx}, z={z_val:.3f})"
+                if z_val is not None
+                else f"{nid} (slice {slice_idx}, cs {cs_idx})"
+            )
             self.plot_cross_section(
                 nid,
                 ax=ax,
                 boundary_color=boundary_color,
                 circle_color=circle_color,
                 show_center=True,
+                title=title,
             )
 
         # Hide any unused subplots
@@ -475,6 +495,7 @@ class SkeletonGraph:
         type_index: int = 5,
         annotate_cycles: bool = True,
         cycle_mode: str = "remove_edge",
+        undo_transforms: Optional[List[str]] = None,
     ) -> None:
         """Write this skeleton graph to an SWC file.
 
@@ -516,6 +537,38 @@ class SkeletonGraph:
             raise ValueError("type_index must be an integer") from e
 
         G = self.G
+
+        # Build optional undo transform matrix for centers and radius scale factor
+        M_undo: Optional[np.ndarray] = None
+        radius_scale_factor: float = 1.0
+        if undo_transforms:
+            # Compose selected transforms in order applied, then invert
+            selected: List[np.ndarray] = []
+            scale_prod: float = 1.0
+            for t in self.transforms_applied:
+                name = t.get("name")
+                if name in undo_transforms:
+                    M = np.asarray(t.get("M"), dtype=float)
+                    if M.shape == (4, 4):
+                        selected.append(M)
+                    if t.get("is_uniform_scale") and t.get("uniform_scale") is not None:
+                        try:
+                            scale_prod *= float(t.get("uniform_scale"))
+                        except Exception:
+                            pass
+            if selected:
+                M_comp = np.eye(4, dtype=float)
+                for M in selected:
+                    M_comp = M @ M_comp
+                try:
+                    M_undo = np.linalg.inv(M_comp)
+                except Exception:
+                    M_undo = None
+            # Undo scaling on radii if we have a valid scale product
+            if np.isfinite(scale_prod) and scale_prod != 0.0:
+                radius_scale_factor = 1.0 / float(scale_prod)
+            else:
+                radius_scale_factor = 1.0
         if G.number_of_nodes() == 0:
             # Write a minimal header file
             with open(filepath, "w", encoding="utf-8") as f:
@@ -635,6 +688,18 @@ class SkeletonGraph:
                     )
                     H.remove_edge(u, v)
 
+        # Helper to transform a center if undo matrix is requested
+        def _maybe_undo_center(center: np.ndarray) -> np.ndarray:
+            if M_undo is None:
+                return center
+            try:
+                c = np.asarray(center, dtype=float)
+                ch = np.array([c[0], c[1], c[2], 1.0], dtype=float)
+                cu = M_undo @ ch
+                return np.array([float(cu[0]), float(cu[1]), float(cu[2])], dtype=float)
+            except Exception:
+                return center
+
         # Helper to get z-value for ordering and root selection
         def _node_z(n: Any) -> float:
             # Prefer attributes from original graph; fall back to duplicates
@@ -646,7 +711,12 @@ class SkeletonGraph:
             if z is None:
                 c = attrs.get("center")
                 if c is not None and len(c) == 3:
-                    return float(c[2])
+                    c3 = (
+                        _maybe_undo_center(np.array(c, dtype=float))
+                        if M_undo is not None
+                        else np.array(c, dtype=float)
+                    )
+                    return float(c3[2])
                 return 0.0
             return float(z)
 
@@ -681,7 +751,14 @@ class SkeletonGraph:
                         f"Node {n!r} is missing a 3D center; cannot export to SWC"
                     )
 
-                x, y, z = float(c[0]), float(c[1]), float(c[2])
+                # Apply optional undo to center and radius
+                c_use = (
+                    _maybe_undo_center(np.array(c, dtype=float))
+                    if M_undo is not None
+                    else np.array(c, dtype=float)
+                )
+                x, y, z = float(c_use[0]), float(c_use[1]), float(c_use[2])
+                r_use = float(r) * radius_scale_factor
 
                 if n == root:
                     parent_idx = -1
@@ -693,7 +770,9 @@ class SkeletonGraph:
                     parent_idx = swc_index.get(p, -1)
 
                 swc_index[n] = idx_counter
-                rows.append((idx_counter, t_code, x, y, z, float(r), int(parent_idx)))
+                rows.append(
+                    (idx_counter, t_code, x, y, z, float(r_use), int(parent_idx))
+                )
                 idx_counter += 1
 
         # Write the SWC file
@@ -808,6 +887,32 @@ def skeletonize(
     )
     mesh = mm.to_trimesh()
 
+    # Snapshot transforms applied so far on the MeshManager into the SkeletonGraph later
+    # by storing them into a temporary list until skel is created.
+    _applied_transforms: List[Dict[str, Any]] = []
+    try:
+        if isinstance(mesh_or_manager, MeshManager) and hasattr(mm, "transform_stack"):
+            for t in getattr(mm, "transform_stack", []):
+                try:
+                    _applied_transforms.append(
+                        {
+                            "name": getattr(t, "name", None),
+                            "M": np.array(getattr(t, "M", np.eye(4)), dtype=float),
+                            "is_uniform_scale": bool(
+                                getattr(t, "is_uniform_scale", False)
+                            ),
+                            "uniform_scale": (
+                                float(getattr(t, "uniform_scale", 1.0))
+                                if getattr(t, "uniform_scale", None) is not None
+                                else None
+                            ),
+                        }
+                    )
+                except Exception:
+                    continue
+    except Exception:
+        _applied_transforms = []
+
     if mesh is None:
         raise ValueError("No mesh provided")
 
@@ -851,9 +956,7 @@ def skeletonize(
     try:
         n_int = int(n_slices)
         if n_int > 0 and (n_int & (n_int - 1)) == 0:
-            msg = (
-                "DISCOS skeletonize: n_slices is a power of 2. The current connectivity algorithm is known to misbehave for some meshes in this case."
-            )
+            msg = "DISCOS skeletonize: n_slices is a power of 2. The current connectivity algorithm is known to misbehave for some meshes in this case."
             warnings.warn(msg, RuntimeWarning)
             logger.warning(msg)
     except Exception:
@@ -872,6 +975,11 @@ def skeletonize(
     terminal_probe = max(10.0 * eps, 0.05 * slice_height)
 
     skel = SkeletonGraph()
+    # Store transform snapshot into the skeleton graph
+    try:
+        skel.transforms_applied = _applied_transforms
+    except Exception:
+        skel.transforms_applied = []
 
     # ------------------------ Terminal junctions (ends) ----------------------
     # Fit junctions at bounding planes using near-plane sections
@@ -1034,7 +1142,10 @@ def skeletonize(
                     for poly in cs0.polygons:
                         try:
                             poly_centroids.append(
-                                np.array([float(poly.centroid.x), float(poly.centroid.y)], dtype=float)
+                                np.array(
+                                    [float(poly.centroid.x), float(poly.centroid.y)],
+                                    dtype=float,
+                                )
                             )
                         except Exception:
                             poly_centroids.append(None)
@@ -1196,8 +1307,7 @@ def skeletonize(
                 "Volume check OK: bands=%.6g, mesh=%.6g, rel_err=%.3f%%",
                 total_band_volume,
                 mesh_vol,
-                100.0
-                * (abs(total_band_volume - mesh_vol) / (mesh_vol + 1e-12)),
+                100.0 * (abs(total_band_volume - mesh_vol) / (mesh_vol + 1e-12)),
             )
 
     # (Removed) Genus-based topological closure: no non-adjacent closure edges are added.
@@ -1239,7 +1349,11 @@ def skeletonize(
         # Top slice isolated nodes connect to nearest in previous slice
         top_slice = n_slices - 1
         sT = list(junctions_by_slice.get(top_slice, []))
-        sPrev = list(junctions_by_slice.get(top_slice - 1, [])) if top_slice - 1 >= 0 else []
+        sPrev = (
+            list(junctions_by_slice.get(top_slice - 1, []))
+            if top_slice - 1 >= 0
+            else []
+        )
         for j in sT:
             if skel.G.degree(j) == 0 and sPrev:
                 cj = skel.junctions[j].center
@@ -1517,7 +1631,9 @@ def _assert_no_overlap(
                             tol,
                         )
                 except Exception as e:
-                    logger.warning("Failed to plot cross-section overlap diagnostics: %s", e)
+                    logger.warning(
+                        "Failed to plot cross-section overlap diagnostics: %s", e
+                    )
 
                 raise ValueError(
                     "Overlapping cross-section polygons detected in a single cut"

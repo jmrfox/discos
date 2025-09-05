@@ -3,6 +3,8 @@ Main mesh class
 """
 
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 import multiprocessing
 import traceback
 from typing import Any, Dict, Optional, Tuple, Union
@@ -57,6 +59,15 @@ class MeshManager:
     Unified mesh class handling loading, processing, and analysis.
     """
 
+    @dataclass
+    class Transform:
+        name: str
+        M: np.ndarray  # 4x4 homogeneous
+        params: Optional[Dict[str, Any]]
+        timestamp: datetime
+        is_uniform_scale: bool = False
+        uniform_scale: Optional[float] = None
+
     def __init__(self, mesh: Optional[trimesh.Trimesh] = None, verbose: bool = True):
         # Core mesh attributes
         self.mesh = mesh
@@ -73,6 +84,11 @@ class MeshManager:
             "watertight_fixed": 0,
             "degenerate_removed": 0,
         }
+
+        # Transformation tracking
+        self.transform_stack: list[MeshManager.Transform] = []
+        self.M_world_from_local: np.ndarray = np.eye(4, dtype=float)
+        self.M_local_from_world: np.ndarray = np.eye(4, dtype=float)
 
     def log(self, message: str, level: str = "INFO"):
         """Compatibility shim: delegate to module logger respecting self.verbose.
@@ -132,6 +148,11 @@ class MeshManager:
             self.original_mesh = mesh.copy()
             self.bounds = self._compute_bounds()
 
+            # Reset transformation tracking on new load
+            self.transform_stack.clear()
+            self.M_world_from_local = np.eye(4, dtype=float)
+            self.M_local_from_world = np.eye(4, dtype=float)
+
             if self.verbose:
                 logger.info(
                     "Loaded mesh: %d vertices, %d faces",
@@ -153,6 +174,76 @@ class MeshManager:
 
     def to_trimesh(self):
         return self.mesh
+
+    # =================================================================
+    # TRANSFORM MANAGEMENT
+    # =================================================================
+
+    def _apply_and_record_transform(
+        self,
+        name: str,
+        M: np.ndarray,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        is_uniform_scale: bool = False,
+        uniform_scale: Optional[float] = None,
+    ) -> None:
+        """Apply a 4x4 transform to the mesh and record it on the stack.
+
+        This updates both the mesh vertices and the cumulative matrices.
+        """
+        if self.mesh is None:
+            raise ValueError("No mesh loaded")
+        M = np.asarray(M, dtype=float)
+        if M.shape != (4, 4):
+            raise ValueError("Transform matrix must be 4x4")
+
+        # Apply to mesh using trimesh's built-in method
+        try:
+            self.mesh.apply_transform(M)
+        except Exception:
+            # Fallback manual apply
+            v = np.asarray(self.mesh.vertices, dtype=float)
+            ones = np.ones((v.shape[0], 1), dtype=float)
+            vh = np.hstack([v, ones])
+            v2 = (M @ vh.T).T[:, :3]
+            self.mesh.vertices = v2
+
+        # Update bounds
+        self.bounds = self._compute_bounds()
+
+        # Update composite matrices
+        self.M_world_from_local = M @ self.M_world_from_local
+        try:
+            self.M_local_from_world = np.linalg.inv(self.M_world_from_local)
+        except Exception:
+            # Maintain previous inverse if singular; still record transform
+            pass
+
+        # Record
+        self.transform_stack.append(
+            MeshManager.Transform(
+                name=name,
+                M=M.copy(),
+                params=None if params is None else dict(params),
+                timestamp=datetime.now(),
+                is_uniform_scale=bool(is_uniform_scale),
+                uniform_scale=float(uniform_scale) if uniform_scale is not None else None,
+            )
+        )
+
+    def apply_transform(self, M: np.ndarray, *, name: str = "custom", params: Optional[Dict[str, Any]] = None) -> trimesh.Trimesh:
+        """Public method to apply and record an arbitrary 4x4 transform."""
+        self._apply_and_record_transform(name, M, params=params)
+        return self.mesh  # type: ignore[return-value]
+
+    def get_composite_matrix(self) -> np.ndarray:
+        """Return the cumulative 4x4 matrix mapping local->world (applied order)."""
+        return self.M_world_from_local.copy()
+
+    def get_inverse_matrix(self) -> np.ndarray:
+        """Return the inverse composite 4x4 matrix (world->local)."""
+        return self.M_local_from_world.copy()
 
     def _compute_bounds(self) -> Optional[Dict[str, Tuple[float, float]]]:
         """Compute mesh bounding box."""
@@ -196,9 +287,14 @@ class MeshManager:
         else:
             raise ValueError(f"Unknown center_on option: {center_on}")
 
-        self.mesh.vertices -= center
-        self.bounds = self._compute_bounds()
-
+        # Build translation to move selected center to origin
+        T = np.eye(4, dtype=float)
+        T[:3, 3] = -np.asarray(center, dtype=float)
+        self._apply_and_record_transform(
+            "center",
+            T,
+            params={"center_on": center_on, "center": np.asarray(center, dtype=float).tolist()},
+        )
         return self.mesh
 
     def scale_mesh(self, scale_factor: float) -> trimesh.Trimesh:
@@ -214,9 +310,18 @@ class MeshManager:
         if self.mesh is None:
             raise ValueError("No mesh loaded")
 
-        self.mesh.vertices *= scale_factor
-        self.bounds = self._compute_bounds()
-
+        S = np.eye(4, dtype=float)
+        sf = float(scale_factor)
+        S[0, 0] = sf
+        S[1, 1] = sf
+        S[2, 2] = sf
+        self._apply_and_record_transform(
+            "normalize_scale",
+            S,
+            params={"scale_factor": sf},
+            is_uniform_scale=True,
+            uniform_scale=sf,
+        )
         return self.mesh
 
     def align_with_z_axis(
@@ -250,11 +355,27 @@ class MeshManager:
             principal_axis, target_axis
         )
 
-        # Apply rotation
-        self.mesh.vertices = (
-            rotation_matrix @ vertices_centered.T
-        ).T + self.mesh.centroid
-        self.bounds = self._compute_bounds()
+        # Apply rotation about centroid to preserve position
+        centroid = self.mesh.centroid
+        R3 = rotation_matrix
+        T1 = np.eye(4, dtype=float)
+        T2 = np.eye(4, dtype=float)
+        T1[:3, 3] = -centroid
+        T2[:3, 3] = centroid
+        R4 = np.eye(4, dtype=float)
+        R4[:3, :3] = R3
+        M = T2 @ R4 @ T1
+        self._apply_and_record_transform(
+            "rotate_to_z_principal_axis",
+            M,
+            params={
+                "method": "PCA",
+                "target_axis": np.asarray(target_axis, dtype=float).tolist()
+                if target_axis is not None
+                else [0.0, 0.0, 1.0],
+                "centroid": centroid.tolist(),
+            },
+        )
 
         return self.mesh
 
@@ -385,11 +506,24 @@ class MeshManager:
         target = np.array([0.0, 0.0, 1.0], dtype=float)
         R = self._rotation_matrix_between_vectors(v, target)
 
-        # Rotate about centroid to preserve position
+        # Rotate about centroid to preserve position via 4x4
         centroid = self.mesh.centroid
-        vc = self.mesh.vertices - centroid
-        self.mesh.vertices = (R @ vc.T).T + centroid
-        self.bounds = self._compute_bounds()
+        T1 = np.eye(4, dtype=float)
+        T2 = np.eye(4, dtype=float)
+        T1[:3, 3] = -centroid
+        T2[:3, 3] = centroid
+        R4 = np.eye(4, dtype=float)
+        R4[:3, :3] = R
+        M = T2 @ R4 @ T1
+        self._apply_and_record_transform(
+            "align_furthest_points_with_z",
+            M,
+            params={
+                "prefer_positive_z": bool(prefer_positive_z),
+                "use_convex_hull": bool(use_convex_hull),
+                "centroid": centroid.tolist(),
+            },
+        )
 
         # Post-rotation correction: compute the furthest pair on the rotated
         # vertices and ensure that vector is aligned with +Z as well. This
@@ -404,12 +538,47 @@ class MeshManager:
                 v2n = v2 / (np.linalg.norm(v2) + 1e-12)
                 if v2n[2] < 0.999:
                     R2 = self._rotation_matrix_between_vectors(v2, target)
-                    vc2 = self.mesh.vertices - centroid
-                    self.mesh.vertices = (R2 @ vc2.T).T + centroid
-                    self.bounds = self._compute_bounds()
+                    T1b = np.eye(4, dtype=float)
+                    T2b = np.eye(4, dtype=float)
+                    T1b[:3, 3] = -centroid
+                    T2b[:3, 3] = centroid
+                    R4b = np.eye(4, dtype=float)
+                    R4b[:3, :3] = R2
+                    M2 = T2b @ R4b @ T1b
+                    self._apply_and_record_transform(
+                        "align_furthest_points_with_z_correction",
+                        M2,
+                        params={"centroid": centroid.tolist()},
+                    )
         except Exception:
             # If anything goes wrong, we keep the initial rotation which already
             # aligns the chosen diameter to +Z.
+            pass
+
+        # Final enforcement of +Z direction if requested: if the furthest-pair
+        # vector still points to -Z due to numerical or selection ambiguities,
+        # rotate 180 degrees about the X-axis around the centroid.
+        try:
+            if prefer_positive_z:
+                Vfinal = np.asarray(self.mesh.vertices, dtype=float)
+                if Vfinal.shape[0] >= 2:
+                    _, _, vf = self._furthest_pair(Vfinal)
+                    if vf[2] < 0:
+                        # 180-degree rotation about X-axis
+                        Rx = np.eye(4, dtype=float)
+                        Rx[1, 1] = -1.0
+                        Rx[2, 2] = -1.0
+                        T1c = np.eye(4, dtype=float)
+                        T2c = np.eye(4, dtype=float)
+                        T1c[:3, 3] = -centroid
+                        T2c[:3, 3] = centroid
+                        Mfix = T2c @ Rx @ T1c
+                        self._apply_and_record_transform(
+                            "align_furthest_points_with_z_sign_fix",
+                            Mfix,
+                            params={"centroid": centroid.tolist()},
+                        )
+        except Exception:
             pass
 
         return self.mesh
