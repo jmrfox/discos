@@ -38,6 +38,7 @@ dependencies = [
     "pandas>=2.0.3",
     "pymeshlab>=2025.7",
     "pdoc>=14.7.0",
+    "cgal>=6.0.1.post202410241521",
 ]
 dynamic = ["version"]
 

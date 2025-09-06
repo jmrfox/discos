@@ -281,7 +281,7 @@ If you use DISCOS in your research, please cite:
 
 ```bibtex
 @software{discos,
-  title={DISCOS: DISrete COllinear Skeletonization},
+  title={DISCOS: Discrete Collinear Skeletonization},
   author={Fox, Jordan},
   year={2025},
   url={https://github.com/jmrfox/discos}

@@ -181,19 +181,36 @@ class SkeletonGraph:
     def add_segment_edges(self, seg: Segment):
         self.segments.append(seg)
         # Connect all lower to all upper (supports branching). Adjacent slices only.
+        # To guarantee no self-connections and strict adjacency, only connect
+        # junctions that lie on this band's lower/upper z-planes respectively.
+        tol = max(1e-9, 1e-6 * abs(float(seg.z_upper) - float(seg.z_lower)))
         for jl in seg.lower_junction_ids:
             for ju in seg.upper_junction_ids:
-                self.G.add_edge(
-                    jl,
-                    ju,
-                    kind="segment",
-                    segment_id=int(seg.id),
-                    slice_index=int(seg.slice_index),
-                    z_lower=float(seg.z_lower),
-                    z_upper=float(seg.z_upper),
-                    volume=float(seg.volume),
-                    surface_area=float(seg.surface_area),
-                )
+                if jl == ju:
+                    # Never allow self-connections
+                    continue
+                # Fetch z of each junction node
+                try:
+                    zl = float(self.G.nodes[jl].get("z", float("nan")))
+                    zu = float(self.G.nodes[ju].get("z", float("nan")))
+                except Exception:
+                    continue
+                # Require nodes to correspond to the band's bounding planes
+                if not (abs(zl - float(seg.z_lower)) <= tol and abs(zu - float(seg.z_upper)) <= tol):
+                    continue
+                # Add edge only if not present
+                if not self.G.has_edge(jl, ju):
+                    self.G.add_edge(
+                        jl,
+                        ju,
+                        kind="segment",
+                        segment_id=int(seg.id),
+                        slice_index=int(seg.slice_index),
+                        z_lower=float(seg.z_lower),
+                        z_upper=float(seg.z_upper),
+                        volume=float(seg.volume),
+                        surface_area=float(seg.surface_area),
+                    )
 
     def to_networkx(self) -> nx.Graph:
         return self.G
@@ -1329,6 +1346,9 @@ def skeletonize(
                         best_d = d
                         best = k
                 if best is not None and not skel.G.has_edge(j, best):
+                    if j == best:
+                        # Avoid self-loop under any circumstance
+                        continue
                     if eff_verbosity >= 2:
                         logger.debug(
                             "[diag] safety-net: connecting isolated bottom node %s -> %s",
@@ -1366,6 +1386,9 @@ def skeletonize(
                         best_d = d
                         best = k
                 if best is not None and not skel.G.has_edge(j, best):
+                    if j == best:
+                        # Avoid self-loop under any circumstance
+                        continue
                     if eff_verbosity >= 2:
                         logger.debug(
                             "[diag] safety-net: connecting isolated top node %s -> %s",
