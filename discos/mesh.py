@@ -3,10 +3,10 @@ Main mesh class
 """
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime
 import multiprocessing
 import traceback
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
@@ -228,11 +228,19 @@ class MeshManager:
                 params=None if params is None else dict(params),
                 timestamp=datetime.now(),
                 is_uniform_scale=bool(is_uniform_scale),
-                uniform_scale=float(uniform_scale) if uniform_scale is not None else None,
+                uniform_scale=(
+                    float(uniform_scale) if uniform_scale is not None else None
+                ),
             )
         )
 
-    def apply_transform(self, M: np.ndarray, *, name: str = "custom", params: Optional[Dict[str, Any]] = None) -> trimesh.Trimesh:
+    def apply_transform(
+        self,
+        M: np.ndarray,
+        *,
+        name: str = "custom",
+        params: Optional[Dict[str, Any]] = None,
+    ) -> trimesh.Trimesh:
         """Public method to apply and record an arbitrary 4x4 transform."""
         self._apply_and_record_transform(name, M, params=params)
         return self.mesh  # type: ignore[return-value]
@@ -293,7 +301,10 @@ class MeshManager:
         self._apply_and_record_transform(
             "center",
             T,
-            params={"center_on": center_on, "center": np.asarray(center, dtype=float).tolist()},
+            params={
+                "center_on": center_on,
+                "center": np.asarray(center, dtype=float).tolist(),
+            },
         )
         return self.mesh
 
@@ -370,9 +381,11 @@ class MeshManager:
             M,
             params={
                 "method": "PCA",
-                "target_axis": np.asarray(target_axis, dtype=float).tolist()
-                if target_axis is not None
-                else [0.0, 0.0, 1.0],
+                "target_axis": (
+                    np.asarray(target_axis, dtype=float).tolist()
+                    if target_axis is not None
+                    else [0.0, 0.0, 1.0]
+                ),
                 "centroid": centroid.tolist(),
             },
         )
@@ -727,12 +740,12 @@ class MeshManager:
 
         # Basic properties
         logger.info("\nGeometry:")
-        logger.info("  * Vertices: %s", analysis['vertex_count'])
-        logger.info("  * Faces: %s", analysis['face_count'])
+        logger.info("  * Vertices: %s", analysis["vertex_count"])
+        logger.info("  * Faces: %s", analysis["face_count"])
         if analysis.get("component_count") is not None:
-            logger.info("  * Components: %s", analysis['component_count'])
+            logger.info("  * Components: %s", analysis["component_count"])
         if analysis.get("volume") is not None:
-            logger.info("  * Volume: %.2f", analysis['volume'])
+            logger.info("  * Volume: %.2f", analysis["volume"])
         if analysis.get("bounds") is not None:
             min_bound, max_bound = analysis["bounds"]
             logger.info(
@@ -747,16 +760,16 @@ class MeshManager:
 
         # Mesh quality
         logger.info("\nMesh Quality:")
-        logger.info("  * Watertight: %s", analysis['is_watertight'])
-        logger.info("  * Winding Consistent: %s", analysis['is_winding_consistent'])
+        logger.info("  * Watertight: %s", analysis["is_watertight"])
+        logger.info("  * Winding Consistent: %s", analysis["is_winding_consistent"])
         if analysis.get("is_manifold") is not None:
-            logger.info("  * Manifold: %s", analysis['is_manifold'])
+            logger.info("  * Manifold: %s", analysis["is_manifold"])
         if analysis.get("normal_direction") is not None:
-            logger.info("  * Normal Direction: %s", analysis['normal_direction'])
+            logger.info("  * Normal Direction: %s", analysis["normal_direction"])
         if analysis.get("duplicate_vertices") is not None:
-            logger.info("  * Duplicate Vertices: %s", analysis['duplicate_vertices'])
+            logger.info("  * Duplicate Vertices: %s", analysis["duplicate_vertices"])
         if analysis.get("degenerate_faces") is not None:
-            logger.info("  * Degenerate Faces: %s", analysis['degenerate_faces'])
+            logger.info("  * Degenerate Faces: %s", analysis["degenerate_faces"])
 
         # Topology
         if (
@@ -765,13 +778,15 @@ class MeshManager:
         ):
             logger.info("\nTopology:")
             if analysis.get("genus") is not None:
-                logger.info("  * Genus: %s", analysis['genus'])
+                logger.info("  * Genus: %s", analysis["genus"])
             if analysis.get("euler_characteristic") is not None:
-                logger.info("  * Euler Characteristic: %s", analysis['euler_characteristic'])
+                logger.info(
+                    "  * Euler Characteristic: %s", analysis["euler_characteristic"]
+                )
 
         # Issues
         if analysis["issues"]:
-            logger.info("\nIssues Detected (%d):", len(analysis['issues']))
+            logger.info("\nIssues Detected (%d):", len(analysis["issues"]))
             for i, issue in enumerate(analysis["issues"]):
                 logger.info("  %d. %s", i + 1, issue)
         else:
@@ -783,7 +798,9 @@ class MeshManager:
             mean = analysis["normal_stats"]["mean"]
             sum_val = analysis["normal_stats"]["sum"]
             logger.info("  * Mean: [%.4f, %.4f, %.4f]", mean[0], mean[1], mean[2])
-            logger.info("  * Sum: [%.4f, %.4f, %.4f]", sum_val[0], sum_val[1], sum_val[2])
+            logger.info(
+                "  * Sum: [%.4f, %.4f, %.4f]", sum_val[0], sum_val[1], sum_val[2]
+            )
 
         logger.info("\nRecommendation:")
         if analysis["issues"]:
