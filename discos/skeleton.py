@@ -196,7 +196,10 @@ class SkeletonGraph:
                 except Exception:
                     continue
                 # Require nodes to correspond to the band's bounding planes
-                if not (abs(zl - float(seg.z_lower)) <= tol and abs(zu - float(seg.z_upper)) <= tol):
+                if not (
+                    abs(zl - float(seg.z_lower)) <= tol
+                    and abs(zu - float(seg.z_upper)) <= tol
+                ):
                     continue
                 # Add edge only if not present
                 if not self.G.has_edge(jl, ju):

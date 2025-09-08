@@ -27,6 +27,7 @@ from .path import data_path
 
 # Skeletonization functions
 from .skeleton import CrossSection, Segment, SkeletonGraph, skeletonize
+from .polylines import PolylinesSkeleton
 
 __all__ = [
     # Mesh processing (primary 3D representation)
@@ -36,6 +37,8 @@ __all__ = [
     "Segment",
     "SkeletonGraph",
     "skeletonize",
+    # Polylines skeleton handler
+    "PolylinesSkeleton",
     # Demo mesh functions
     "create_cylinder_mesh",
     "create_torus_mesh",
