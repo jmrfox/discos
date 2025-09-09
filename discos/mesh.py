@@ -5,12 +5,11 @@ Main mesh class
 import logging
 import multiprocessing
 import traceback
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import trimesh
+from .object3d import Object3D
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -54,19 +53,10 @@ def _pymeshfix_worker(
         queue.put(("err", repr(e), traceback.format_exc()))
 
 
-class MeshManager:
+class MeshManager(Object3D):
     """
     Unified mesh class handling loading, processing, and analysis.
     """
-
-    @dataclass
-    class Transform:
-        name: str
-        M: np.ndarray  # 4x4 homogeneous
-        params: Optional[Dict[str, Any]]
-        timestamp: datetime
-        is_uniform_scale: bool = False
-        uniform_scale: Optional[float] = None
 
     def __init__(self, mesh: Optional[trimesh.Trimesh] = None, verbose: bool = True):
         # Core mesh attributes
@@ -84,11 +74,9 @@ class MeshManager:
             "watertight_fixed": 0,
             "degenerate_removed": 0,
         }
-
-        # Transformation tracking
-        self.transform_stack: list[MeshManager.Transform] = []
-        self.M_world_from_local: np.ndarray = np.eye(4, dtype=float)
-        self.M_local_from_world: np.ndarray = np.eye(4, dtype=float)
+        
+        # Initialize shared Object3D state (transform stack and matrices)
+        super().__init__()
 
     def log(self, message: str, level: str = "INFO"):
         """Compatibility shim: delegate to module logger respecting self.verbose.
@@ -179,60 +167,33 @@ class MeshManager:
     # TRANSFORM MANAGEMENT
     # =================================================================
 
-    def _apply_and_record_transform(
-        self,
-        name: str,
-        M: np.ndarray,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        is_uniform_scale: bool = False,
-        uniform_scale: Optional[float] = None,
-    ) -> None:
-        """Apply a 4x4 transform to the mesh and record it on the stack.
-
-        This updates both the mesh vertices and the cumulative matrices.
-        """
+    def _apply_transform_inplace(self, M: np.ndarray) -> None:
+        """Apply a 4x4 transform to the underlying mesh geometry in-place."""
         if self.mesh is None:
             raise ValueError("No mesh loaded")
         M = np.asarray(M, dtype=float)
         if M.shape != (4, 4):
             raise ValueError("Transform matrix must be 4x4")
 
-        # Apply to mesh using trimesh's built-in method
+        # Apply to mesh using trimesh's built-in method, with manual fallback
         try:
             self.mesh.apply_transform(M)
         except Exception:
-            # Fallback manual apply
             v = np.asarray(self.mesh.vertices, dtype=float)
             ones = np.ones((v.shape[0], 1), dtype=float)
             vh = np.hstack([v, ones])
             v2 = (M @ vh.T).T[:, :3]
             self.mesh.vertices = v2
 
-        # Update bounds
+    def _post_apply_transform(
+        self,
+        name: str,
+        M: np.ndarray,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        # Recompute bounds after transform
         self.bounds = self._compute_bounds()
-
-        # Update composite matrices
-        self.M_world_from_local = M @ self.M_world_from_local
-        try:
-            self.M_local_from_world = np.linalg.inv(self.M_world_from_local)
-        except Exception:
-            # Maintain previous inverse if singular; still record transform
-            pass
-
-        # Record
-        self.transform_stack.append(
-            MeshManager.Transform(
-                name=name,
-                M=M.copy(),
-                params=None if params is None else dict(params),
-                timestamp=datetime.now(),
-                is_uniform_scale=bool(is_uniform_scale),
-                uniform_scale=(
-                    float(uniform_scale) if uniform_scale is not None else None
-                ),
-            )
-        )
 
     def apply_transform(
         self,
@@ -241,8 +202,8 @@ class MeshManager:
         name: str = "custom",
         params: Optional[Dict[str, Any]] = None,
     ) -> trimesh.Trimesh:
-        """Public method to apply and record an arbitrary 4x4 transform."""
-        self._apply_and_record_transform(name, M, params=params)
+        """Apply and record an arbitrary 4x4 transform, returning the mesh."""
+        super()._apply_and_record_transform(name, M, params=params)
         return self.mesh  # type: ignore[return-value]
 
     def get_composite_matrix(self) -> np.ndarray:
@@ -1086,8 +1047,27 @@ class MeshManager:
             except Exception:
                 pass
 
-        self.mesh = repaired
-        return repaired
+            # Optionally keep largest component
+            if keep_largest_component:
+                try:
+                    comps = repaired.split(only_watertight=False)
+                    if len(comps) > 1:
+
+                        def comp_key(c: trimesh.Trimesh):
+                            vol = abs(float(getattr(c, "volume", 0.0)))
+                            return (vol, len(c.faces))
+
+                        comps_filtered = [
+                            c for c in comps if len(c.faces) >= int(min_component_faces)
+                        ]
+                        use = comps_filtered if comps_filtered else comps
+                        repaired = max(use, key=comp_key)
+                        repaired.process(validate=True)
+                except Exception:
+                    pass
+
+            self.mesh = repaired
+            return repaired
 
     def visualize_mesh_3d(
         self,
@@ -1098,6 +1078,11 @@ class MeshManager:
         show_wireframe: bool = False,
         width: int = 800,
         height: int = 600,
+        *,
+        polylines: Optional["PolylinesSkeleton"] = None,
+        poly_color: str = "crimson",
+        poly_line_width: float = 3.0,
+        poly_opacity: float = 0.95,
     ) -> Optional[object]:
         """
         Create a 3D visualization of a mesh.
@@ -1108,39 +1093,67 @@ class MeshManager:
             backend: Visualization backend ('plotly' or 'matplotlib')
             show_axes: Whether to show coordinate axes
             show_wireframe: Whether to show wireframe overlay
+            polylines: Optional PolylinesSkeleton to overlay as 3D lines
+            poly_color: Color for polylines overlay
+            poly_line_width: Line width for polylines overlay
+            poly_opacity: Opacity for polylines overlay (plotly only)
 
         Returns:
             Figure object (backend-dependent) or None if visualization fails
         """
         if backend == "auto":
-            # Try plotly first, then fallback to others
+            # Try plotly first, then fallback to matplotlib
             try:
-                import plotly.graph_objects as go
-
+                import plotly.graph_objects as go  # noqa: F401
                 backend = "plotly"
             except ImportError:
                 try:
-                    import matplotlib.pyplot as plt
-
+                    import matplotlib.pyplot as plt  # noqa: F401
                     backend = "matplotlib"
                 except ImportError:
                     backend = "plotly"
 
         if backend == "plotly":
             return self._visualize_mesh_plotly(
-                title, color, show_axes, show_wireframe, width, height
+                title,
+                color,
+                show_axes,
+                show_wireframe,
+                width,
+                height,
+                polylines=polylines,
+                poly_color=poly_color,
+                poly_line_width=poly_line_width,
+                poly_opacity=poly_opacity,
             )
         elif backend == "matplotlib":
             return self._visualize_mesh_matplotlib(
-                title, color, show_axes, show_wireframe
+                title,
+                color,
+                show_axes,
+                show_wireframe,
+                polylines=polylines,
+                poly_color=poly_color,
+                poly_line_width=poly_line_width,
             )
         else:
             raise ValueError(f"Unknown backend: {backend}")
 
     def _visualize_mesh_plotly(
-        self, title, color, show_axes, show_wireframe, width=800, height=600
+        self,
+        title,
+        color,
+        show_axes,
+        show_wireframe,
+        width=800,
+        height=600,
+        *,
+        polylines: Optional["PolylinesSkeleton"] = None,
+        poly_color: str = "crimson",
+        poly_line_width: float = 3.0,
+        poly_opacity: float = 0.95,
     ):
-        """Plotly-based mesh visualization."""
+        """Plotly-based mesh visualization with optional polylines overlay."""
         try:
             import plotly.graph_objects as go
 
@@ -1164,36 +1177,45 @@ class MeshManager:
 
             # Add wireframe if requested
             if show_wireframe:
-                # Create wireframe edges
-                edge_trace = []
+                edge_x = []
+                edge_y = []
+                edge_z = []
                 for face in faces:
                     for i in range(3):
                         v1, v2 = face[i], face[(i + 1) % 3]
-                        edge_trace.extend(
-                            [
-                                vertices[v1][0],
-                                vertices[v2][0],
-                                None,
-                                vertices[v1][1],
-                                vertices[v2][1],
-                                None,
-                                vertices[v1][2],
-                                vertices[v2][2],
-                                None,
-                            ]
-                        )
-
-                if edge_trace:
-                    fig.add_trace(
-                        go.Scatter3d(
-                            x=edge_trace[::3],
-                            y=edge_trace[1::3],
-                            z=edge_trace[2::3],
-                            mode="lines",
-                            line=dict(color="black", width=1),
-                            name="Wireframe",
-                        )
+                        edge_x += [vertices[v1][0], vertices[v2][0], None]
+                        edge_y += [vertices[v1][1], vertices[v2][1], None]
+                        edge_z += [vertices[v1][2], vertices[v2][2], None]
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=edge_x,
+                        y=edge_y,
+                        z=edge_z,
+                        mode="lines",
+                        line=dict(color="black", width=1),
+                        name="Wireframe",
                     )
+                )
+
+            # Add polylines overlay if provided
+            if polylines is not None and hasattr(polylines, "polylines"):
+                for idx, pl in enumerate(polylines.polylines):
+                    if pl is None:
+                        continue
+                    pts = np.asarray(pl, dtype=float)
+                    if pts.ndim == 2 and pts.shape[1] >= 3 and pts.shape[0] >= 2:
+                        fig.add_trace(
+                            go.Scatter3d(
+                                x=pts[:, 0],
+                                y=pts[:, 1],
+                                z=pts[:, 2],
+                                mode="lines",
+                                line=dict(color=poly_color, width=float(poly_line_width)),
+                                opacity=float(poly_opacity),
+                                name=f"Polyline {idx}",
+                                showlegend=False,
+                            )
+                        )
 
             # Configure layout
             fig.update_layout(
@@ -1218,8 +1240,18 @@ class MeshManager:
             print(f"Plotly visualization failed: {e}")
             return None
 
-    def _visualize_mesh_matplotlib(self, title, color, show_axes, show_wireframe):
-        """Matplotlib-based mesh visualization."""
+    def _visualize_mesh_matplotlib(
+        self,
+        title,
+        color,
+        show_axes,
+        show_wireframe,
+        *,
+        polylines: Optional["PolylinesSkeleton"] = None,
+        poly_color: str = "crimson",
+        poly_line_width: float = 3.0,
+    ):
+        """Matplotlib-based mesh visualization with optional polylines overlay."""
         try:
             import matplotlib.pyplot as plt
             from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -1238,6 +1270,21 @@ class MeshManager:
                 edgecolor="black" if show_wireframe else None,
             )
             ax.add_collection3d(poly3d)
+
+            # Add polylines overlay if provided
+            if polylines is not None and hasattr(polylines, "polylines"):
+                for pl in polylines.polylines:
+                    if pl is None:
+                        continue
+                    pts = np.asarray(pl, dtype=float)
+                    if pts.ndim == 2 and pts.shape[1] >= 3 and pts.shape[0] >= 2:
+                        ax.plot(
+                            pts[:, 0],
+                            pts[:, 1],
+                            pts[:, 2],
+                            color=poly_color,
+                            linewidth=float(poly_line_width),
+                        )
 
             ax.set_xlim(vertices[:, 0].min(), vertices[:, 0].max())
             ax.set_ylim(vertices[:, 1].min(), vertices[:, 1].max())

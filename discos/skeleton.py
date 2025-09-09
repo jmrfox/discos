@@ -85,6 +85,7 @@ import shapely.geometry as sgeom
 import trimesh
 
 from .mesh import MeshManager
+from .polylines import PolylinesSkeleton
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -94,6 +95,33 @@ logger.addHandler(logging.NullHandler())
 # ============================================================================
 # Data models
 # ============================================================================
+
+
+@dataclass
+class PolylineGuidanceConfig:
+    """
+    Configuration for optional polyline-guided skeletonization.
+
+    By default this is conservative and does not change connectivity unless
+    explicitly enabled. We attach polyline hints to junction nodes and annotate
+    edges with any supporting polylines. Future iterations may leverage these
+    hints to bias connectivity decisions.
+    """
+
+    use_guidance: bool = True
+    # Preprocessing of polylines (not applied by default to avoid mutation):
+    snap_polylines_to_mesh: bool = False
+    max_snap_distance: Optional[float] = None
+
+    # Slice association / matching thresholds
+    slice_z_tolerance: float = 1e-3
+    junction_match_radius: float = 2.0  # match hints to junction centers in XY
+
+    # Scoring knobs for future connectivity selection
+    guidance_weight: float = 0.5
+    max_tangent_misalignment_deg: float = 45.0
+    require_within_same_band: bool = True
+    allow_soft_guidance_only: bool = True  # do not create nodes purely from hints
 
 
 @dataclass
@@ -203,6 +231,18 @@ class SkeletonGraph:
                     continue
                 # Add edge only if not present
                 if not self.G.has_edge(jl, ju):
+                    # Derive polyline support by intersecting polyline ids
+                    def _ids_for(nid: int) -> List[int]:
+                        try:
+                            hints = self.G.nodes[nid].get("polyline_hints", [])
+                            return [int(h.get("polyline_id", -1)) for h in hints if h.get("polyline_id") is not None]
+                        except Exception:
+                            return []
+
+                    ids_l = set(_ids_for(jl))
+                    ids_u = set(_ids_for(ju))
+                    support = sorted(list(ids_l.intersection(ids_u))) if ids_l and ids_u else []
+
                     self.G.add_edge(
                         jl,
                         ju,
@@ -213,6 +253,8 @@ class SkeletonGraph:
                         z_upper=float(seg.z_upper),
                         volume=float(seg.volume),
                         surface_area=float(seg.surface_area),
+                        polyline_support=support,
+                        chosen_by="unguided",
                     )
 
     def to_networkx(self) -> nx.Graph:
@@ -866,6 +908,8 @@ def skeletonize(
     verbosity: Optional[int] = None,
     enforce_connected: bool = True,
     connect_isolated_terminals: bool = True,
+    polylines: Optional[PolylinesSkeleton] = None,
+    guidance: Optional[PolylineGuidanceConfig] = None,
 ) -> SkeletonGraph:
     """
     Build a `SkeletonGraph` by slicing the mesh along z into `n_slices` bands.
@@ -1039,6 +1083,62 @@ def skeletonize(
         len(skel.cross_sections),
         len(skel.junctions),
     )
+
+    # ---------------------- Polyline guidance (hints) -----------------------
+    # Attach per-junction polyline hints at corresponding slice planes.
+    if polylines is not None and guidance is not None and guidance.use_guidance:
+        # Optional snapping: use a copy to avoid mutating caller's data
+        pls_use = polylines
+        if guidance.snap_polylines_to_mesh:
+            try:
+                pls_use = polylines.copy()
+                _moved, _mean = pls_use.snap_to_mesh_surface(
+                    mesh,
+                    project_outside_only=True,
+                    max_distance=guidance.max_snap_distance,
+                )
+            except Exception:
+                pls_use = polylines
+
+        # Build per-slice hints
+        for cs in skel.cross_sections:
+            try:
+                hints = _polyline_intersections_at_z(
+                    pls_use, float(cs.z), float(guidance.slice_z_tolerance)
+                )
+            except Exception:
+                hints = []
+
+            if not hints or not cs.junction_ids:
+                continue
+
+            # Attach hints near each junction center within match radius
+            for j_id in cs.junction_ids:
+                j = skel.junctions.get(j_id)
+                if j is None or j.center is None:
+                    continue
+                cx, cy = float(j.center[0]), float(j.center[1])
+                accepted: List[Dict[str, Any]] = []
+                for h in hints:
+                    p = h.get("point")
+                    if p is None:
+                        continue
+                    # z proximity already ensured by construction; check xy radius
+                    dx = float(p[0]) - cx
+                    dy = float(p[1]) - cy
+                    if dx * dx + dy * dy <= guidance.junction_match_radius ** 2:
+                        # Store minimal fields to keep memory light
+                        accepted.append(
+                            {
+                                "polyline_id": int(h.get("polyline_id", -1)),
+                                "point": np.array(p, dtype=float),
+                                "tangent": np.array(h.get("tangent", [0, 0, 1]), dtype=float),
+                            }
+                        )
+                if accepted:
+                    # Merge with any existing hints
+                    prev = skel.G.nodes[j_id].get("polyline_hints", [])
+                    skel.G.nodes[j_id]["polyline_hints"] = list(prev) + accepted
 
     # ---------------- Bands: connect junctions across adjacent cuts ----------
     junctions_by_slice: Dict[int, List[int]] = {}
@@ -1286,11 +1386,64 @@ def skeletonize(
                 upper_junction_ids=upper_ids,
             )
             skel.segments.append(seg)
-            # Simplified connectivity: connect all lower junctions to all upper
-            # junctions that are matched within this band component. This
-            # ensures connections only occur between adjacent slices and within
-            # the same contiguous volume component.
-            if lower_ids and upper_ids:
+            # Guided connectivity selection using polyline hints if available
+            used_guided = False
+            if (
+                polylines is not None
+                and guidance is not None
+                and guidance.use_guidance
+                and lower_ids
+                and upper_ids
+            ):
+                # Precompute node -> set(polyline_id) for quick intersection
+                def _poly_ids_for(nid: int) -> List[int]:
+                    try:
+                        hints = skel.G.nodes[nid].get("polyline_hints", [])
+                        return [
+                            int(h.get("polyline_id", -1))
+                            for h in hints
+                            if h.get("polyline_id") is not None
+                        ]
+                    except Exception:
+                        return []
+
+                guided_pairs: List[Tuple[int, int, List[int]]] = []
+                for jl in lower_ids:
+                    ids_l = set(_poly_ids_for(jl))
+                    if not ids_l:
+                        continue
+                    for ju in upper_ids:
+                        if jl == ju:
+                            continue
+                        ids_u = set(_poly_ids_for(ju))
+                        if not ids_u:
+                            continue
+                        shared = sorted(list(ids_l.intersection(ids_u)))
+                        if shared:
+                            guided_pairs.append((jl, ju, shared))
+
+                # If we found any guided pairs, add only those; else fall back
+                if guided_pairs:
+                    used_guided = True
+                    for jl, ju, support in guided_pairs:
+                        if skel.G.has_edge(jl, ju):
+                            continue
+                        skel.G.add_edge(
+                            jl,
+                            ju,
+                            kind="segment",
+                            segment_id=int(seg.id),
+                            slice_index=int(seg.slice_index),
+                            z_lower=float(seg.z_lower),
+                            z_upper=float(seg.z_upper),
+                            volume=float(seg.volume),
+                            surface_area=float(seg.surface_area),
+                            polyline_support=support,
+                            chosen_by="guided",
+                        )
+
+            # Fallback (and default) connectivity: fully bipartite within band
+            if not used_guided and lower_ids and upper_ids:
                 skel.add_segment_edges(seg)
             segment_id += 1
 
@@ -1436,6 +1589,81 @@ def skeletonize(
 # ============================================================================
 # Helpers
 # ============================================================================
+
+
+def _polyline_intersections_at_z(
+    pls: "PolylinesSkeleton", z: float, tol: float = 1e-3
+) -> List[Dict[str, Any]]:
+    """Return intersection hints of polylines with the plane z=const.
+
+    For each polyline segment, if the segment crosses the target z (or an
+    endpoint lies within ``tol`` of z), record an intersection point and an
+    approximate tangent based on the local segment direction.
+
+    Returns a list of dicts: {"polyline_id", "point": np.ndarray(3), "tangent": np.ndarray(3)}.
+    """
+
+    def _norm(v: np.ndarray) -> np.ndarray:
+        vv = np.asarray(v, dtype=float)
+        n = float(np.linalg.norm(vv))
+        if not np.isfinite(n) or n <= 1e-12:
+            return np.array([0.0, 0.0, 1.0], dtype=float)
+        return vv / n
+
+    results: List[Dict[str, Any]] = []
+    if pls is None or not getattr(pls, "polylines", None):
+        return results
+
+    for pid, pl in enumerate(pls.polylines):
+        P = np.asarray(pl, dtype=float)
+        if P.ndim != 2 or P.shape[1] != 3 or P.shape[0] == 0:
+            continue
+
+        # Track near-duplicate suppression to avoid exploding hints
+        seen_points: List[np.ndarray] = []
+
+        n = P.shape[0]
+        for i in range(n - 1):
+            p0 = P[i]
+            p1 = P[i + 1]
+            z0 = float(p0[2])
+            z1 = float(p1[2])
+
+            # Helper to add a point with deduplication
+            def _try_add(pt: np.ndarray, tvec: np.ndarray) -> None:
+                nonlocal seen_points
+                # Deduplicate by proximity (3D)
+                for q in seen_points:
+                    if float(np.linalg.norm(pt - q)) <= max(1e-9, tol * 0.1):
+                        return
+                seen_points.append(pt)
+                results.append(
+                    {
+                        "polyline_id": int(pid),
+                        "point": np.array(pt, dtype=float),
+                        "tangent": _norm(tvec),
+                    }
+                )
+
+            seg_dir = p1 - p0
+
+            # Endpoints on the plane (within tol)
+            if abs(z0 - z) <= tol:
+                # Tangent preference: forward segment if available, else backward
+                tvec = seg_dir if i + 1 < n else (p0 - P[i - 1] if i > 0 else seg_dir)
+                _try_add(p0, tvec)
+            if abs(z1 - z) <= tol:
+                tvec = seg_dir if i + 1 < n else (p1 - p0)
+                _try_add(p1, tvec)
+
+            # Proper crossing strictly between endpoints
+            if (z - z0) * (z - z1) < 0.0:
+                # Linear interpolation fraction along the segment
+                t = (z - z0) / (z1 - z0)
+                pt = p0 + t * seg_dir
+                _try_add(pt, seg_dir)
+
+    return results
 
 
 def _create_junctions_at_cut(

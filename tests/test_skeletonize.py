@@ -30,7 +30,7 @@ def test_cylinder_single_component_no_cycles(n_slices: int):
 
 @pytest.mark.parametrize("n_slices", SLICE_COUNTS)
 def test_torus_single_component_one_cycle(n_slices: int):
-    # Donut (torus) around Z; expect exactly one cycle in the skeleton graph
+    # Torus around Z; expect exactly one cycle in the skeleton graph
     # Choose radii to be well-resolved
     torus = create_torus_mesh(
         major_radius=np.pi, minor_radius=np.pi / 3, major_segments=24, minor_segments=12

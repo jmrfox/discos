@@ -10,31 +10,22 @@ Provides a `PolylinesSkeleton` class to:
 
 Note: This class is designed to guide the skeletonization process optionally.
 """
+
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import trimesh
 
+from .object3d import Object3D
+
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-@dataclass
-class Transform:
-    name: str
-    M: np.ndarray  # 4x4 homogeneous
-    params: Optional[Dict[str, Any]]
-    timestamp: datetime
-    is_uniform_scale: bool = False
-    uniform_scale: Optional[float] = None
-
-
-class PolylinesSkeleton:
+class PolylinesSkeleton(Object3D):
     """
     Container for a set of 3D polylines with transform management.
 
@@ -56,9 +47,8 @@ class PolylinesSkeleton:
                 self.polylines.append(arr.copy())
         self.original_polylines: List[np.ndarray] = [pl.copy() for pl in self.polylines]
 
-        self.transform_stack: List[Transform] = []
-        self.M_world_from_local: np.ndarray = np.eye(4, dtype=float)
-        self.M_local_from_world: np.ndarray = np.eye(4, dtype=float)
+        # Initialize shared Object3D state
+        super().__init__()
 
     # ---------------------------------------------------------------------
     # IO
@@ -121,7 +111,11 @@ class PolylinesSkeleton:
         all_pts = np.vstack(self.polylines)
         lo = all_pts.min(axis=0)
         hi = all_pts.max(axis=0)
-        return {"x": (float(lo[0]), float(hi[0])), "y": (float(lo[1]), float(hi[1])), "z": (float(lo[2]), float(hi[2]))}
+        return {
+            "x": (float(lo[0]), float(hi[0])),
+            "y": (float(lo[1]), float(hi[1])),
+            "z": (float(lo[2]), float(hi[2])),
+        }
 
     def centroid(self) -> Optional[np.ndarray]:
         if not self.polylines:
@@ -136,6 +130,7 @@ class PolylinesSkeleton:
         self,
         M: np.ndarray,
     ) -> None:
+        """Apply the 4x4 transform to each polyline in-place."""
         M = np.asarray(M, dtype=float)
         if M.shape != (4, 4):
             raise ValueError("Transform matrix must be 4x4")
@@ -147,44 +142,7 @@ class PolylinesSkeleton:
             v2 = (M @ vh.T).T[:, :3]
             self.polylines[i] = v2
 
-    def _apply_and_record_transform(
-        self,
-        name: str,
-        M: np.ndarray,
-        *,
-        params: Optional[Dict[str, Any]] = None,
-        is_uniform_scale: bool = False,
-        uniform_scale: Optional[float] = None,
-    ) -> None:
-        self._apply_transform_inplace(M)
-        # Update composite matrices
-        self.M_world_from_local = M @ self.M_world_from_local
-        try:
-            self.M_local_from_world = np.linalg.inv(self.M_world_from_local)
-        except Exception:
-            pass
-        # Record
-        self.transform_stack.append(
-            Transform(
-                name=name,
-                M=M.copy(),
-                params=None if params is None else dict(params),
-                timestamp=datetime.now(),
-                is_uniform_scale=bool(is_uniform_scale),
-                uniform_scale=float(uniform_scale) if uniform_scale is not None else None,
-            )
-        )
-
-    def apply_transform(
-        self, M: np.ndarray, *, name: str = "custom", params: Optional[Dict[str, Any]] = None
-    ) -> None:
-        self._apply_and_record_transform(name, M, params=params)
-
-    def get_composite_matrix(self) -> np.ndarray:
-        return self.M_world_from_local.copy()
-
-    def get_inverse_matrix(self) -> np.ndarray:
-        return self.M_local_from_world.copy()
+    # Transform application and matrix getters are inherited from Object3D
 
     # Convenience transforms
     def translate(self, t: Iterable[float]) -> None:
@@ -211,7 +169,9 @@ class PolylinesSkeleton:
         T[:3, 3] = -np.asarray(c, dtype=float)
         self._apply_and_record_transform("center", T, params={"center": c.tolist()})
 
-    def align_principal_axis_with_z(self, target_axis: Optional[np.ndarray] = None) -> None:
+    def align_principal_axis_with_z(
+        self, target_axis: Optional[np.ndarray] = None
+    ) -> None:
         if not self.polylines:
             return
         if target_axis is None:
@@ -238,7 +198,10 @@ class PolylinesSkeleton:
             axis = axis / (np.linalg.norm(axis) + 1e-12)
             dot = np.clip(np.dot(v1, v2), -1.0, 1.0)
             angle = float(np.arccos(dot))
-        K = np.array([[0, -axis[2], axis[1]],[axis[2], 0, -axis[0]],[-axis[1], axis[0], 0]], dtype=float)
+        K = np.array(
+            [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]],
+            dtype=float,
+        )
         R3 = np.eye(3, dtype=float) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
         # rotate about centroid
         T1 = np.eye(4, dtype=float)
@@ -248,7 +211,9 @@ class PolylinesSkeleton:
         R4 = np.eye(4, dtype=float)
         R4[:3, :3] = R3
         M = T2 @ R4 @ T1
-        self._apply_and_record_transform("align_principal_axis_with_z", M, params={"centroid": ctr.tolist()})
+        self._apply_and_record_transform(
+            "align_principal_axis_with_z", M, params={"centroid": ctr.tolist()}
+        )
 
     # Undo / reset
     def reset_transforms(self) -> None:
@@ -277,7 +242,9 @@ class PolylinesSkeleton:
     # ---------------------------------------------------------------------
     # Interop with MeshManager
     # ---------------------------------------------------------------------
-    def copy_transforms_from_mesh(self, mesh_manager: Any, *, mode: str = "stack") -> None:
+    def copy_transforms_from_mesh(
+        self, mesh_manager: Any, *, mode: str = "stack"
+    ) -> None:
         """
         Copy transforms from a `MeshManager`.
 
@@ -292,10 +259,16 @@ class PolylinesSkeleton:
         except Exception:
             MeshManager = None  # type: ignore
         if MeshManager is not None and not isinstance(mesh_manager, MeshManager):
-            logger.warning("copy_transforms_from_mesh: object is not a MeshManager instance")
+            logger.warning(
+                "copy_transforms_from_mesh: object is not a MeshManager instance"
+            )
         if mode == "composite":
-            M = np.asarray(getattr(mesh_manager, "M_world_from_local", np.eye(4)), dtype=float)
-            self._apply_and_record_transform("mesh_composite_copy", M, params={"source": "MeshManager"})
+            M = np.asarray(
+                getattr(mesh_manager, "M_world_from_local", np.eye(4)), dtype=float
+            )
+            self._apply_and_record_transform(
+                "mesh_composite_copy", M, params={"source": "MeshManager"}
+            )
             return
         # Default: apply each transform in order
         stack = getattr(mesh_manager, "transform_stack", [])
@@ -342,7 +315,11 @@ class PolylinesSkeleton:
 
         # Flatten to a single array and track mapping back
         counts = [pl.shape[0] for pl in self.polylines]
-        P = np.vstack(self.polylines) if self.polylines else np.zeros((0, 3), dtype=float)
+        P = (
+            np.vstack(self.polylines)
+            if self.polylines
+            else np.zeros((0, 3), dtype=float)
+        )
 
         # Try signed distance to detect outside points
         use_mask = None
@@ -401,3 +378,130 @@ class PolylinesSkeleton:
         self.polylines = new_polylines
         mean_move = (total_move / moved) if moved > 0 else 0.0
         return moved, mean_move
+
+    # ---------------------------------------------------------------------
+    # Visualization
+    # ---------------------------------------------------------------------
+    def visualize_3d(
+        self,
+        title: str = "3D Polylines",
+        color: str = "crimson",
+        *,
+        backend: str = "auto",
+        show_axes: bool = True,
+        width: int = 800,
+        height: int = 600,
+        line_width: float = 3.0,
+        opacity: float = 0.95,
+    ) -> Optional[object]:
+        """Visualize the polylines in 3D.
+
+        Args:
+            title: Figure title
+            color: Line color for polylines
+            backend: 'plotly', 'matplotlib', or 'auto'
+            show_axes: Whether to display axes
+            width: Figure width (pixels for plotly)
+            height: Figure height (pixels for plotly)
+            line_width: Line width for polylines
+            opacity: Opacity for plotly lines
+
+        Returns:
+            Backend-specific figure/axes object or None if backend unavailable.
+        """
+        # Determine backend if auto
+        if backend == "auto":
+            try:
+                import plotly.graph_objects as go  # noqa: F401
+
+                backend = "plotly"
+            except Exception:
+                try:
+                    import matplotlib.pyplot as plt  # noqa: F401
+
+                    backend = "matplotlib"
+                except Exception:
+                    backend = "plotly"
+
+        if backend == "plotly":
+            try:
+                import plotly.graph_objects as go
+
+                fig = go.Figure()
+                # Add a trace per polyline
+                for idx, pl in enumerate(self.polylines):
+                    if pl.size == 0:
+                        continue
+                    fig.add_trace(
+                        go.Scatter3d(
+                            x=pl[:, 0],
+                            y=pl[:, 1],
+                            z=pl[:, 2],
+                            mode="lines",
+                            line=dict(color=color, width=float(line_width)),
+                            opacity=float(opacity),
+                            name=f"Polyline {idx}",
+                        )
+                    )
+
+                fig.update_layout(
+                    title=title,
+                    autosize=False,
+                    width=int(width),
+                    height=int(height),
+                    scene=dict(
+                        aspectmode="data",
+                        xaxis=dict(visible=show_axes),
+                        yaxis=dict(visible=show_axes),
+                        zaxis=dict(visible=show_axes),
+                    ),
+                    showlegend=False,
+                )
+                return fig
+            except Exception as e:
+                logger.warning("Plotly visualization failed: %s", e)
+                return None
+
+        if backend == "matplotlib":
+            try:
+                import matplotlib.pyplot as plt
+                from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+                fig = plt.figure(figsize=(max(4, width / 100), max(3, height / 100)))
+                ax = fig.add_subplot(111, projection="3d")
+
+                # Plot each polyline
+                for pl in self.polylines:
+                    if pl.size == 0:
+                        continue
+                    ax.plot(
+                        pl[:, 0],
+                        pl[:, 1],
+                        pl[:, 2],
+                        color=color,
+                        linewidth=float(line_width),
+                    )
+
+                # Axis labels and bounds
+                try:
+                    if self.polylines:
+                        P = np.vstack(self.polylines)
+                        ax.set_xlim(P[:, 0].min(), P[:, 0].max())
+                        ax.set_ylim(P[:, 1].min(), P[:, 1].max())
+                        ax.set_zlim(P[:, 2].min(), P[:, 2].max())
+                except Exception:
+                    pass
+
+                ax.set_xlabel("X")
+                ax.set_ylabel("Y")
+                ax.set_zlabel("Z")
+                ax.set_title(title)
+                if not show_axes:
+                    ax.set_axis_off()
+                fig.tight_layout()
+                return fig
+            except Exception as e:
+                logger.warning("Matplotlib visualization failed: %s", e)
+                return None
+
+        raise ValueError(f"Unknown backend: {backend}")

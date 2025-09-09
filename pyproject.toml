@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "discos"
 authors = [{name = "Jordan Fox", email = "jmrfox@example.com"}]
-description = "DISrete COllinear Skeletonization for 3D mesh processing and neuronal morphology analysis"
+description = "Discrete Collinear Skeletonization for 3D mesh processing and neuronal morphology analysis"
 readme = "README.md"
 requires-python = ">=3.8"
 keywords = ["neuroscience", "mesh-processing", "skeletonization", "swc", "neuron", "morphology"]

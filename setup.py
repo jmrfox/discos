@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Setup script for DISCOS (DISrete COllinear Skeletonization)
+Setup script for DISCOS (Discrete Collinear Skeletonization)
 """
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -21,8 +21,8 @@ setup(
     name="discos",
     version="0.1.0",
     author="Jordan Fox",
-    author_email="jmrfox@example.com",
-    description="DISrete COllinear Skeletonization for 3D mesh analysis and neuronal morphology processing",
+    author_email="",
+    description="Discrete Collinear Skeletonization for 3D mesh analysis and neuronal morphology processing",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jmrfox/discos",
