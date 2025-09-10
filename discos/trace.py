@@ -55,8 +55,42 @@ logger.addHandler(logging.NullHandler())
 # ---------------------------------------------------------------------------
 @dataclass
 class TraceOptions:
+    """
+     Configuration options for polyline-guided tracing and local radius estimation.
+
+     These options control how input polylines are sampled, how local
+     cross-sections are probed and selected, how radii are estimated from those
+     sections (or from the surface directly), and how cycles are handled during
+     SWC export.
+
+     Attributes:
+         spacing: Sampling step along polylines in mesh units. Resampling keeps
+             endpoints and inserts additional samples at approximately fixed arc-length.
+         radius_mode: Strategy for estimating node radii at each sample. One of:
+             - "equivalent_area" (default): r = sqrt(A/pi) using cross-section area.
+             - "equivalent_perimeter": r = L/(2*pi) using exterior boundary length.
+             - "section_median": median ray-to-boundary distance in the local section
+               plane from the sample origin (robust for irregular/partial sections).
+             - "section_circle_fit": algebraic circle fit (Kåsa) to the section boundary.
+             - "nearest_surface": distance from the sample point to nearest mesh surface
+               (bypasses sectioning entirely, useful as a robust fallback).
+         annotate_cycles: Whether to annotate cycle-breaking operations in SWC headers.
+         cycle_mode: When exporting SWC, how to break cycles: "duplicate_junction" or
+             "remove_edge". The default preserves all segments by duplicating a branching
+             node and rewiring one incident cycle edge.
+         section_probe_eps: Step size (scaled by mesh bbox) for offsetting the section
+             plane origin along the local normal when the exact plane yields no curves.
+         section_probe_tries: Number of +/- k*eps offsets to try when seeking a section.
+         snap_polylines_to_mesh: If True, project polylines to nearest surface before
+             tracing. Useful when user-provided lines are slightly off the surface.
+         max_snap_distance: Optional distance threshold for snapping; larger moves are
+             ignored if provided.
+         undo_transforms: Names of MeshManager transforms to undo at SWC export time.
+             This will move node centers back and rescale radii accordingly.
+         type_index: Integer code to write in the SWC T column for all samples.
+     """
     spacing: float = 1.0  # sampling step along polylines (mesh units)
-    radius_mode: str = "equivalent_area"  # or "equivalent_perimeter"
+    radius_mode: str = "equivalent_area"  # {"equivalent_area", "equivalent_perimeter", "section_median", "section_circle_fit", "nearest_surface"}
     annotate_cycles: bool = True
     cycle_mode: str = "duplicate_junction"  # or "remove_edge"
     # When the exact plane P,t yields an empty section, try small offsets
@@ -83,17 +117,32 @@ def build_traced_skeleton_graph(
     options: Optional[TraceOptions] = None,
 ) -> SkeletonGraph:
     """
-    Trace polylines over a mesh and build a SkeletonGraph with nodes at sampled
-    polyline points and radii fit from local mesh cross-sections.
+    Trace polylines over a mesh and build a `SkeletonGraph` with nodes at sampled
+    polyline points and radii estimated from local mesh cross-sections perpendicular
+    to the local tangent.
+
+    - Resamples each input polyline with spacing `options.spacing`.
+    - For each sample P with tangent T, intersects the mesh with the plane
+      (origin=P, normal=T) and selects the polygon that covers/contains the local
+      origin, or the one whose boundary is closest to it.
+    - Estimates a radius using `options.radius_mode` (equivalent area, equivalent
+      perimeter, section median, section circle fit, or nearest surface).
+    - If no section is found near the exact plane, tries small offsets along ±T
+      controlled by `section_probe_eps` and `section_probe_tries`.
+    - If still no section is found, falls back to nearest surface distance.
+
+    Records per-node diagnostics:
+      - `radius_source`: which strategy actually provided the radius
+      - `inside_mesh`: whether the sample point appears inside the mesh (signed distance <= 0)
 
     Args:
-        mesh_or_manager: The mesh to intersect against (trimesh.Trimesh) or a
-            MeshManager instance.
-        polylines: Set of polylines (already in the same coordinate frame as the mesh).
-        options: TraceOptions controlling sampling, radius mode, and cycle handling.
+        mesh_or_manager: The mesh to intersect against (`trimesh.Trimesh`) or a
+            `MeshManager` instance.
+        polylines: Polyline guidance, in the same frame as the mesh.
+        options: `TraceOptions` controlling sampling, radius mode, and cycle handling.
 
     Returns:
-        A populated SkeletonGraph. Use `to_swc` to export with cycle-breaking.
+        A populated `SkeletonGraph`. Use `to_swc` to export with cycle-breaking.
     """
     if options is None:
         options = TraceOptions()
@@ -205,42 +254,62 @@ def build_traced_skeleton_graph(
                     n = np.array([0.0, 0.0, 1.0], dtype=float)
                 n = n / (np.linalg.norm(n) + 1e-12)
 
-            # Fit local cross-section radius
-            poly2d = _cross_section_polygon_near_point(
-                mesh=mesh,
-                origin=P,
-                normal=n,
-                eps=eps,
-                max_tries=int(options.section_probe_tries),
-            )
-            if poly2d is not None:
-                area = float(poly2d.area)
-                if options.radius_mode == "equivalent_perimeter":
-                    perim = float(poly2d.exterior.length)
-                    radius = perim / (2.0 * math.pi) if perim > 0 else 0.0
-                else:
-                    radius = math.sqrt(area / math.pi) if area > 0 else 0.0
-            else:
-                # No section found; robust fallback radius = distance to nearest mesh vertex
-                area = 0.0
-                try:
-                    if v_kdtree is not None and V.size > 0:
-                        dd, _ = v_kdtree.query(P, k=1)
-                        radius = float(dd)
-                    else:
-                        try:
-                            from trimesh.proximity import closest_point  # type: ignore
+            # Fit local radius according to selected mode
+            area = 0.0
+            radius = 0.0
+            radius_source = "unknown"
+            inside_mesh = None
 
-                            CP, dist, _tri = closest_point(mesh, P.reshape(1, 3))
-                            _ = CP  # unused except for sanity
-                            radius = float(dist[0])
-                        except Exception:
-                            if V.size > 0:
-                                radius = float(np.min(np.linalg.norm(V - P, axis=1)))
-                            else:
-                                radius = 0.0
-                except Exception:
-                    radius = 0.0
+            # Inside/outside diagnostic (does not alter logic; used for debugging)
+            try:
+                from trimesh.proximity import signed_distance  # type: ignore
+
+                sd = float(signed_distance(mesh, P.reshape(1, 3))[0])
+                # Convention: positive outside in trimesh; <= 0 means inside/on
+                inside_mesh = bool(sd <= 0.0)
+            except Exception:
+                inside_mesh = None
+
+            # Special case: explicitly request nearest surface distance
+            if options.radius_mode == "nearest_surface":
+                radius = _nearest_surface_distance(P, mesh, V, v_kdtree)
+                radius_source = "nearest_surface"
+            else:
+                # Try cross-section first
+                poly2d = _cross_section_polygon_near_point(
+                    mesh=mesh,
+                    origin=P,
+                    normal=n,
+                    eps=eps,
+                    max_tries=int(options.section_probe_tries),
+                )
+                if poly2d is not None:
+                    area = float(poly2d.area)
+                    mode = str(options.radius_mode)
+                    if mode == "equivalent_perimeter":
+                        perim = float(poly2d.exterior.length)
+                        radius = perim / (2.0 * math.pi) if perim > 0 else 0.0
+                        radius_source = "equivalent_perimeter"
+                    elif mode == "section_median":
+                        radius = _radius_from_section_median(poly2d)
+                        radius_source = "section_median"
+                    elif mode == "section_circle_fit":
+                        r_fit = _radius_from_section_circle_fit(poly2d)
+                        if not np.isfinite(r_fit) or r_fit <= 0:
+                            # conservative fallback to equivalent area
+                            radius = math.sqrt(area / math.pi) if area > 0 else 0.0
+                            radius_source = "equivalent_area_fallback"
+                        else:
+                            radius = float(r_fit)
+                            radius_source = "section_circle_fit"
+                    else:  # "equivalent_area" (default) or unknown => area-based
+                        radius = math.sqrt(area / math.pi) if area > 0 else 0.0
+                        radius_source = "equivalent_area"
+                else:
+                    # No section found; robust fallback = nearest surface distance
+                    area = 0.0
+                    radius = _nearest_surface_distance(P, mesh, V, v_kdtree)
+                    radius_source = "nearest_surface_fallback"
 
             # Add node
             nid = alloc_id()
@@ -254,6 +323,13 @@ def build_traced_skeleton_graph(
                 "cross_section_index": int(i),
             }
             skel.add_junction(_junction_from_dict(j))
+            # Attach source metadata on the graph node for diagnostics
+            try:
+                skel.G.nodes[nid]["radius_source"] = radius_source
+                if inside_mesh is not None:
+                    skel.G.nodes[nid]["inside_mesh"] = bool(inside_mesh)
+            except Exception:
+                pass
 
             # Edge from previous sample
             if prev_node is not None and prev_node != nid:
@@ -496,34 +572,53 @@ def _cross_section_polygon_near_point(
     n = np.asarray(normal, dtype=float)
     n = n / (np.linalg.norm(n) + 1e-12)
 
-    # Try origin plane and probe offsets
-    offsets = [0.0]
-    for k in range(1, int(max_tries) + 1):
-        offsets.extend([+k * float(eps), -k * float(eps)])
+    # Try origin plane and probe offsets; if none found, auto-expand eps
+    for scale in (1.0, 2.0, 4.0):
+        eps_s = float(eps) * scale
+        offsets = [0.0]
+        for k in range(1, int(max_tries) + 1):
+            offsets.extend([+k * eps_s, -k * eps_s])
 
-    for off in offsets:
-        o = P + off * n
-        try:
-            path = mesh.section(plane_origin=o, plane_normal=n)
-        except Exception:
-            path = None
-        if path is None or not hasattr(path, "entities") or len(path.entities) == 0:
-            continue
+        for off in offsets:
+            o = P + off * n
+            try:
+                path = mesh.section(plane_origin=o, plane_normal=n)
+            except Exception:
+                path = None
+            if path is None:
+                continue
+            # Accept either entities or discrete loops; skip only if both are absent/empty
+            entities_candidate = getattr(path, "entities", None)
+            has_entities = entities_candidate is not None and len(entities_candidate) > 0
+            loops_candidate = getattr(path, "discrete", None)
+            has_loops = loops_candidate is not None and len(loops_candidate) > 0
+            if not (has_entities or has_loops):
+                continue
 
         # Map 3D curve points to local plane 2D
         M = _world_to_local_plane(P, n)
         polys_2d: List[sgeom.Polygon] = []
         try:
-            for ent in getattr(path, "entities", []):
-                # entity.points is (m,3) in world coords; transform to local
-                pts3 = np.asarray(getattr(ent, "points", None), dtype=float)
+            # Prefer discrete polylines assembled by trimesh over raw entities
+            loops = getattr(path, "discrete", None) or []
+            if loops:
+                src_iter = loops
+            else:
+                # Fall back to raw entities' points
+                src_iter = [
+                    np.asarray(getattr(ent, "points", None), dtype=float)
+                    for ent in getattr(path, "entities", [])
+                ]
+            for pts3 in src_iter:
+                pts3 = np.asarray(pts3, dtype=float)
                 if pts3.ndim != 2 or pts3.shape[1] != 3 or pts3.shape[0] < 2:
                     continue
-                # homogeneous transform
+                # homogeneous transform into local plane centered at P
                 ones = np.ones((pts3.shape[0], 1), dtype=float)
                 v2 = (M @ np.hstack([pts3, ones]).T).T[:, :3]
-                # ensure closure and take XY
                 XY = v2[:, :2]
+                if XY.shape[0] < 3:
+                    continue
                 if not np.allclose(XY[0], XY[-1]):
                     XY = np.vstack([XY, XY[0]])
                 poly = sgeom.Polygon(XY)
@@ -544,8 +639,17 @@ def _cross_section_polygon_near_point(
             continue
 
         origin_pt = sgeom.Point(0.0, 0.0)
-        # Prefer polygons that contain the origin
-        containing = [poly for poly in composed if poly.contains(origin_pt)]
+        # Prefer polygons that contain or cover the origin (treat boundary as inside)
+        containing: List[sgeom.Polygon] = []
+        for poly in composed:
+            try:
+                # Shapely 2: covers includes boundary; fallback to contains
+                if hasattr(poly, "covers") and poly.covers(origin_pt):  # type: ignore[attr-defined]
+                    containing.append(poly)
+                elif poly.contains(origin_pt):
+                    containing.append(poly)
+            except Exception:
+                continue
         if containing:
             # If multiple, pick the one with smallest area to be conservative
             containing.sort(key=lambda p: float(p.area))
@@ -555,3 +659,137 @@ def _cross_section_polygon_near_point(
         return composed[0]
 
     return None
+
+
+def _nearest_surface_distance(
+    P: np.ndarray,
+    mesh: trimesh.Trimesh,
+    V: np.ndarray,
+    v_kdtree: Optional[object],
+) -> float:
+    """Distance from point P to nearest point on mesh surface.
+
+    Uses trimesh.proximity.closest_point when available; falls back to KDTree over
+    vertices or a brute-force vertex distance as a last resort.
+    """
+    try:
+        # Prefer trimesh closest_point for accurate surface distance
+        try:
+            from trimesh.proximity import closest_point  # type: ignore
+
+            CP, dist, _tri = closest_point(mesh, P.reshape(1, 3))
+            _ = CP  # unused
+            return float(dist[0])
+        except Exception:
+            pass
+        # Fallback to KDTree over vertices if available
+        if v_kdtree is not None and V.size > 0:
+            dd, _ = v_kdtree.query(P, k=1)  # type: ignore[attr-defined]
+            return float(dd)
+        # Last resort: brute-force to vertices
+        if V.size > 0:
+            return float(np.min(np.linalg.norm(V - P, axis=1)))
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def _radius_from_section_median(poly: sgeom.Polygon, *, n_rays: int = 64) -> float:
+    """Robust radius estimate as the median distance from origin to exterior.
+
+    Samples n_rays uniformly spaced directions and intersects rays from the origin
+    (0,0) with the polygon exterior boundary, ignoring holes. Returns the median of
+    the first intersection distances. If intersections fail, returns 0.0.
+    """
+    try:
+        if poly is None or not poly.is_valid or poly.area <= 0:
+            return 0.0
+        origin = sgeom.Point(0.0, 0.0)
+        # Prefer only when origin lies inside polygon (in local plane)
+        if not poly.contains(origin):
+            # fall back to equivalent area notion if outside; be conservative
+            A = float(poly.area)
+            return math.sqrt(A / math.pi) if A > 0 else 0.0
+
+        # Determine an adequate ray length based on bounds
+        minx, miny, maxx, maxy = poly.bounds
+        R = float(max(maxx - minx, maxy - miny)) * 2.0
+        if not np.isfinite(R) or R <= 0:
+            R = float(max(1.0, math.sqrt(poly.area / math.pi) * 4.0))
+
+        distances: List[float] = []
+        for k in range(int(max(8, n_rays))):
+            th = (2.0 * math.pi) * (k / float(n_rays))
+            dx = math.cos(th)
+            dy = math.sin(th)
+            ray = sgeom.LineString([(0.0, 0.0), (dx * R, dy * R)])
+            try:
+                inter = ray.intersection(poly.exterior)
+            except Exception:
+                continue
+            # inter may be MultiPoint or Point
+            pts: List[Tuple[float, float]] = []
+            if inter.is_empty:
+                continue
+            if hasattr(inter, "geoms"):
+                for g in inter.geoms:  # type: ignore[attr-defined]
+                    if hasattr(g, "x") and hasattr(g, "y"):
+                        pts.append((float(g.x), float(g.y)))
+            else:
+                if hasattr(inter, "x") and hasattr(inter, "y"):
+                    pts.append((float(inter.x), float(inter.y)))
+            if not pts:
+                continue
+            # Choose the nearest positive distance along the ray
+            best = None
+            for (x, y) in pts:
+                d = math.hypot(x, y)
+                # ensure same direction as (dx,dy) via dot >= 0
+                if x * dx + y * dy >= -1e-9:
+                    if best is None or d < best:
+                        best = d
+            if best is not None and np.isfinite(best):
+                distances.append(float(best))
+        if not distances:
+            return 0.0
+        distances.sort()
+        m = distances[len(distances) // 2]
+        return float(m)
+    except Exception:
+        return 0.0
+
+
+def _radius_from_section_circle_fit(poly: sgeom.Polygon) -> float:
+    """Fit an algebraic circle to the exterior ring and return its radius.
+
+    Uses a simple least-squares Kåsa fit on the exterior coords. Returns 0 on
+    failure or degeneracy.
+    """
+    try:
+        if poly is None or not poly.is_valid or poly.area <= 0:
+            return 0.0
+        coords = np.asarray(poly.exterior.coords, dtype=float)
+        if coords.ndim != 2 or coords.shape[0] < 3:
+            return 0.0
+        XY = coords[:, :2]
+        # Remove duplicate final point if closed
+        if XY.shape[0] >= 2 and np.allclose(XY[0], XY[-1]):
+            XY = XY[:-1]
+        if XY.shape[0] < 3:
+            return 0.0
+        x = XY[:, 0]
+        y = XY[:, 1]
+        A = np.column_stack([x, y, np.ones_like(x)])
+        b = -(x * x + y * y)
+        # Solve A*[a,b,c]^T ~ b
+        sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+        a, b2, c = sol
+        cx = -0.5 * a
+        cy = -0.5 * b2
+        r2 = cx * cx + cy * cy - c
+        if not np.isfinite(r2) or r2 <= 0:
+            return 0.0
+        r = math.sqrt(float(r2))
+        return float(r)
+    except Exception:
+        return 0.0

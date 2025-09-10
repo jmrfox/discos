@@ -566,7 +566,7 @@ class SkeletonGraph:
         annotate_cycles: bool = True,
         cycle_mode: str = "duplicate_junction",
         undo_transforms: Optional[List[str]] = None,
-        force_single_tree: bool = False,
+        force_single_tree: bool = True,
     ) -> None:
         """Write this skeleton graph to an SWC file.
 
