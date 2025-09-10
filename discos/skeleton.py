@@ -235,13 +235,21 @@ class SkeletonGraph:
                     def _ids_for(nid: int) -> List[int]:
                         try:
                             hints = self.G.nodes[nid].get("polyline_hints", [])
-                            return [int(h.get("polyline_id", -1)) for h in hints if h.get("polyline_id") is not None]
+                            return [
+                                int(h.get("polyline_id", -1))
+                                for h in hints
+                                if h.get("polyline_id") is not None
+                            ]
                         except Exception:
                             return []
 
                     ids_l = set(_ids_for(jl))
                     ids_u = set(_ids_for(ju))
-                    support = sorted(list(ids_l.intersection(ids_u))) if ids_l and ids_u else []
+                    support = (
+                        sorted(list(ids_l.intersection(ids_u)))
+                        if ids_l and ids_u
+                        else []
+                    )
 
                     self.G.add_edge(
                         jl,
@@ -554,10 +562,11 @@ class SkeletonGraph:
         self,
         filepath: str,
         *,
-        type_index: int = 5,
+        type_index: int = 3,
         annotate_cycles: bool = True,
-        cycle_mode: str = "remove_edge",
+        cycle_mode: str = "duplicate_junction",
         undo_transforms: Optional[List[str]] = None,
+        force_single_tree: bool = False,
     ) -> None:
         """Write this skeleton graph to an SWC file.
 
@@ -591,6 +600,10 @@ class SkeletonGraph:
                 When "duplicate_junction", a branching node on the cycle is
                 duplicated and one of its incident cycle edges is rewired to
                 the duplicate.
+            force_single_tree: If True, after cycle-breaking, connect any
+                remaining disconnected components into a single tree by adding
+                minimal bridging edges between components (nearest center pairs).
+                Bridges are annotated in the SWC header.
         """
         # Validate type index
         try:
@@ -647,6 +660,7 @@ class SkeletonGraph:
 
         removed_edges: List[Dict[str, Any]] = []
         duplicated_nodes: List[Dict[str, Any]] = []
+        component_bridges: List[Dict[str, Any]] = []
         # Attributes for synthetic duplicate nodes (not present in self.G)
         extra_node_attrs: Dict[Any, Dict[str, Any]] = {}
 
@@ -786,6 +800,46 @@ class SkeletonGraph:
         components = list(nx.connected_components(H))
         # Sort components by their lowest z to make output stable
         components.sort(key=lambda comp: min(_node_z(n) for n in comp))
+        n_components_initial = len(components)
+
+        def _center3(n: Any) -> Optional[np.ndarray]:
+            attrs = G.nodes[n] if n in G.nodes else extra_node_attrs.get(n, {})
+            c = attrs.get("center")
+            if c is None:
+                return None
+            try:
+                cc = np.asarray(c, dtype=float)
+                return _maybe_undo_center(cc) if M_undo is not None else cc
+            except Exception:
+                return None
+
+        if force_single_tree and n_components_initial > 1:
+            # Use the first (lowest-z) component as base; connect others to it
+            base_nodes = set(components[0])
+            for comp in components[1:]:
+                best_pair: Optional[Tuple[Any, Any]] = None
+                best_d = float("inf")
+                for u in base_nodes:
+                    cu = _center3(u)
+                    if cu is None:
+                        continue
+                    for v in comp:
+                        cv = _center3(v)
+                        if cv is None:
+                            continue
+                        d = float(np.linalg.norm(cu - cv))
+                        if d < best_d:
+                            best_d = d
+                            best_pair = (u, v)
+                if best_pair is not None:
+                    u, v = best_pair
+                    if not H.has_edge(u, v):
+                        H.add_edge(u, v)
+                    component_bridges.append({"u": u, "v": v, "distance": best_d})
+                    base_nodes |= set(comp)
+            # Recompute components after bridging
+            components = list(nx.connected_components(H))
+            components.sort(key=lambda comp: min(_node_z(n) for n in comp))
 
         swc_index: Dict[Any, int] = {}
         rows: List[Tuple[int, int, float, float, float, float, int]] = []
@@ -837,15 +891,19 @@ class SkeletonGraph:
                 )
                 idx_counter += 1
 
-        # Write the SWC file
+        # Write the SWC file with headers and annotations
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("# SWC exported by DISCOS SkeletonGraph.to_swc\n")
             f.write(f"# Date: {datetime.now().isoformat()}\n")
             f.write("# Columns: n T x y z R p\n")
             f.write(f"# Type index (T) used for all samples: {t_code}\n")
-            if len(components) > 1:
+            if not force_single_tree and len(components) > 1:
                 f.write(
                     f"# Note: {len(components)} disconnected components were serialized; each begins with a root (parent -1).\n"
+                )
+            if force_single_tree and n_components_initial > 1:
+                f.write(
+                    f"# Bridged {n_components_initial - 1} disconnected component(s) into a single SWC tree.\n"
                 )
             if annotate_cycles:
                 if removed_edges:
@@ -886,6 +944,20 @@ class SkeletonGraph:
                             f"orig_jid={orig} dup_id={dup} from_jid={redirected_from} "
                             f"orig_swc={s_orig} dup_swc={s_dup} from_swc={s_from} "
                             f"segment_id={seg_id} slice_index={slice_idx} z_lower={z_low} z_upper={z_up}\n"
+                        )
+                if force_single_tree and component_bridges:
+                    f.write(
+                        f"# Added {len(component_bridges)} component bridge(s) to ensure a single SWC tree.\n"
+                    )
+                    for info in component_bridges:
+                        u = info.get("u")
+                        v = info.get("v")
+                        su = swc_index.get(u)
+                        sv = swc_index.get(v)
+                        dist = info.get("distance")
+                        f.write(
+                            "# component_bridge "
+                            f"u_jid={u} v_jid={v} u_swc={su} v_swc={sv} distance={dist}\n"
                         )
 
             for n, T_code, x, y, z, R, parent in rows:
@@ -1126,13 +1198,15 @@ def skeletonize(
                     # z proximity already ensured by construction; check xy radius
                     dx = float(p[0]) - cx
                     dy = float(p[1]) - cy
-                    if dx * dx + dy * dy <= guidance.junction_match_radius ** 2:
+                    if dx * dx + dy * dy <= guidance.junction_match_radius**2:
                         # Store minimal fields to keep memory light
                         accepted.append(
                             {
                                 "polyline_id": int(h.get("polyline_id", -1)),
                                 "point": np.array(p, dtype=float),
-                                "tangent": np.array(h.get("tangent", [0, 0, 1]), dtype=float),
+                                "tangent": np.array(
+                                    h.get("tangent", [0, 0, 1]), dtype=float
+                                ),
                             }
                         )
                 if accepted:

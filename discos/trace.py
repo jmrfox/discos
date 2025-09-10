@@ -18,8 +18,10 @@ High level:
     - one node per sample with center at P (exact polyline coordinate) and the
       fitted radius; area stored for diagnostics
     - edges connecting consecutive samples along each polyline
-- Export SWC using SkeletonGraph.to_swc, which includes the same cycle-breaking
-  strategy used by DISCOS' planar slice skeletonization.
+- Export SWC using SkeletonGraph.to_swc. By default, cycles are broken using the
+  "duplicate_junction" strategy (duplicate a branching node and rewire one
+  incident cycle edge to the duplicate) so the SWC remains a single tree while
+  preserving all modeled connections.
 
 Notes:
 - This module intentionally does not change connectivity beyond linking samples
@@ -28,10 +30,11 @@ Notes:
 - Coordinates are taken directly from the polylines (no snapping by default).
   An optional snap-to-mesh pass is provided via PolylinesSkeleton if desired.
 """
+
 from __future__ import annotations
 
-import math
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -55,7 +58,7 @@ class TraceOptions:
     spacing: float = 1.0  # sampling step along polylines (mesh units)
     radius_mode: str = "equivalent_area"  # or "equivalent_perimeter"
     annotate_cycles: bool = True
-    cycle_mode: str = "remove_edge"  # or "duplicate_junction"
+    cycle_mode: str = "duplicate_junction"  # or "remove_edge"
     # When the exact plane P,t yields an empty section, try small offsets
     # along the normal by +/- k * eps until found or max_tries.
     section_probe_eps: float = 1e-4
@@ -65,11 +68,13 @@ class TraceOptions:
     max_snap_distance: Optional[float] = None
     # Undo selected transforms at SWC export (names from MeshManager.transform_stack)
     undo_transforms: Optional[List[str]] = None
+    type_index: int = 3
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build_traced_skeleton_graph(
     mesh_or_manager: Union[trimesh.Trimesh, MeshManager],
@@ -117,14 +122,28 @@ def build_traced_skeleton_graph(
                 project_outside_only=True,
                 max_distance=options.max_snap_distance,
             )
-            logger.info("Polylines snapped to mesh surface: moved=%d, mean=%.4g", moved, mean)
+            logger.info(
+                "Polylines snapped to mesh surface: moved=%d, mean=%.4g", moved, mean
+            )
         except Exception as e:
             logger.warning("Failed snapping polylines to mesh: %s", e)
 
     # Pre-compute mesh scale for section probing epsilon
     V = np.asarray(mesh.vertices, dtype=float)
     bbox_size = float(np.linalg.norm(V.max(axis=0) - V.min(axis=0))) if V.size else 1.0
-    eps = max(1e-12, float(options.section_probe_eps) * (bbox_size if bbox_size > 0 else 1.0))
+    eps = max(
+        1e-12, float(options.section_probe_eps) * (bbox_size if bbox_size > 0 else 1.0)
+    )
+
+    # Build a KDTree over mesh vertices for robust radius fallback (if SciPy available)
+    v_kdtree = None
+    try:
+        if V.size > 0:
+            from scipy.spatial import cKDTree  # type: ignore
+
+            v_kdtree = cKDTree(V)
+    except Exception:
+        v_kdtree = None
 
     # Build graph
     skel = SkeletonGraph()
@@ -154,6 +173,7 @@ def build_traced_skeleton_graph(
 
     # Helper to allocate node ids
     next_id = 0
+
     def alloc_id() -> int:
         nonlocal next_id
         nid = next_id
@@ -201,9 +221,26 @@ def build_traced_skeleton_graph(
                 else:
                     radius = math.sqrt(area / math.pi) if area > 0 else 0.0
             else:
-                # No section found; fallback: try to keep last radius, else 0
+                # No section found; robust fallback radius = distance to nearest mesh vertex
                 area = 0.0
-                radius = 0.0
+                try:
+                    if v_kdtree is not None and V.size > 0:
+                        dd, _ = v_kdtree.query(P, k=1)
+                        radius = float(dd)
+                    else:
+                        try:
+                            from trimesh.proximity import closest_point  # type: ignore
+
+                            CP, dist, _tri = closest_point(mesh, P.reshape(1, 3))
+                            _ = CP  # unused except for sanity
+                            radius = float(dist[0])
+                        except Exception:
+                            if V.size > 0:
+                                radius = float(np.min(np.linalg.norm(V - P, axis=1)))
+                            else:
+                                radius = 0.0
+                except Exception:
+                    radius = 0.0
 
             # Add node
             nid = alloc_id()
@@ -221,7 +258,9 @@ def build_traced_skeleton_graph(
             # Edge from previous sample
             if prev_node is not None and prev_node != nid:
                 try:
-                    skel.G.add_edge(prev_node, nid, kind="trace", polyline_index=int(pl_index))
+                    skel.G.add_edge(
+                        prev_node, nid, kind="trace", polyline_index=int(pl_index)
+                    )
                 except Exception:
                     pass
             prev_node = nid
@@ -252,16 +291,18 @@ def trace_polylines_to_swc(
     skel = build_traced_skeleton_graph(mesh_or_manager, polylines, options=options)
     skel.to_swc(
         swc_path,
-        type_index=5,
+        type_index=options.type_index,
         annotate_cycles=bool(options.annotate_cycles),
         cycle_mode=str(options.cycle_mode),
         undo_transforms=options.undo_transforms,
+        force_single_tree=True,
     )
 
 
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
 
 def _junction_from_dict(d: Dict[str, Any]):
     """Create a skeleton.Junction dataclass instance from a dict of fields."""
@@ -356,9 +397,9 @@ def _plane_basis(normal: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray
     # pick a not-near-parallel axis
     ax = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
     u = np.cross(n, ax)
-    u /= (np.linalg.norm(u) + 1e-12)
+    u /= np.linalg.norm(u) + 1e-12
     v = np.cross(n, u)
-    v /= (np.linalg.norm(v) + 1e-12)
+    v /= np.linalg.norm(v) + 1e-12
     return u, v, n
 
 
@@ -396,12 +437,14 @@ def _compose_polygons_with_holes(polys: List[sgeom.Polygon]) -> List[sgeom.Polyg
                 contains[i][j] = polys[i].contains(polys[j])
             except Exception:
                 contains[i][j] = False
+
     def depth_of(idx: int) -> int:
         d = 0
         for k in range(n):
             if contains[k][idx]:
                 d += 1
         return d
+
     depths = [depth_of(i) for i in range(n)]
     # Group children under each even-depth parent
     result: List[sgeom.Polygon] = []
