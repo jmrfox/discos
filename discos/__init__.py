@@ -24,17 +24,10 @@ from .mesh import MeshManager
 
 # Utility functions
 from .path import data_path
+from .polylines import PolylinesSkeleton
 
 # Skeletonization functions
-from .skeleton import (
-    CrossSection,
-    Segment,
-    SkeletonGraph,
-    skeletonize,
-    PolylineGuidanceConfig,
-    Junction,
-)
-from .polylines import PolylinesSkeleton
+from .skeleton import CrossSection, Junction, Segment, SkeletonGraph
 from .trace import TraceOptions, build_traced_skeleton_graph, trace_polylines_to_swc
 
 __all__ = [
@@ -44,8 +37,6 @@ __all__ = [
     "CrossSection",
     "Segment",
     "SkeletonGraph",
-    "skeletonize",
-    "PolylineGuidanceConfig",
     "Junction",
     # Polylines skeleton handler
     "PolylinesSkeleton",
